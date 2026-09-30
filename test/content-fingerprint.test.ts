@@ -10,7 +10,7 @@ describe('content fingerprint', () => {
     expect(first).toBe(second);
   });
 
-  it('ignores image URL query strings and fragments', () => {
+  it('ignores media URL query strings and fragments', () => {
     const first = createContentFingerprint({
       text: 'caption',
       media: [{ type: 'image', url: 'https://cdn.example.com/image.png?token=one#x' }],
@@ -23,17 +23,27 @@ describe('content fingerprint', () => {
     expect(first).toBe(second);
   });
 
-  it('changes when substantive text or media path changes', () => {
-    const textA = createContentFingerprint({ text: 'alpha' });
-    const textB = createContentFingerprint({ text: 'beta' });
-    const imageA = createContentFingerprint({
-      media: [{ type: 'image', url: 'https://cdn.example.com/a.png' }],
+  it('includes media type and ordered paths in the fingerprint', () => {
+    const image = createContentFingerprint({
+      media: [{ type: 'image', url: 'https://cdn.example.com/a' }],
     });
-    const imageB = createContentFingerprint({
-      media: [{ type: 'image', url: 'https://cdn.example.com/b.png' }],
+    const video = createContentFingerprint({
+      media: [{ type: 'video', url: 'https://cdn.example.com/a' }],
+    });
+    const ordered = createContentFingerprint({
+      media: [
+        { type: 'image', url: 'https://cdn.example.com/a' },
+        { type: 'video', url: 'https://cdn.example.com/b' },
+      ],
+    });
+    const reversed = createContentFingerprint({
+      media: [
+        { type: 'video', url: 'https://cdn.example.com/b' },
+        { type: 'image', url: 'https://cdn.example.com/a' },
+      ],
     });
 
-    expect(textA).not.toBe(textB);
-    expect(imageA).not.toBe(imageB);
+    expect(image).not.toBe(video);
+    expect(ordered).not.toBe(reversed);
   });
 });

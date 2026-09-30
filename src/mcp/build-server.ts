@@ -18,22 +18,31 @@ export interface McpDependencies {
 
 const providerSchema = z.enum(['threads', 'instagram', 'facebook', 'linkedin', 'tiktok', 'x']);
 
-const imageSchema = z.object({
-  type: z.literal('image'),
-  url: z
-    .string()
-    .url()
-    .refine((value) => new URL(value).protocol === 'https:', 'Image URL must use HTTPS.'),
-  alt_text: z.string().min(1).optional(),
-});
+const httpsUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => new URL(value).protocol === 'https:', 'Media URL must use HTTPS.');
+
+const mediaSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('image'),
+    url: httpsUrlSchema,
+    alt_text: z.string().min(1).optional(),
+  }),
+  z.object({
+    type: z.literal('video'),
+    url: httpsUrlSchema,
+    alt_text: z.string().min(1).optional(),
+  }),
+]);
 
 const postContentSchema = z
   .object({
     text: z.string().min(1).optional(),
-    media: z.array(imageSchema).max(1).optional(),
+    media: z.array(mediaSchema).max(20).optional(),
   })
   .refine((value) => Boolean(value.text || value.media?.length), {
-    message: 'A post requires text or one image.',
+    message: 'A post requires text or media.',
   });
 
 function toolError(message: string, details?: Record<string, unknown>) {
@@ -56,6 +65,24 @@ function duplicateToolError(error: DuplicateContentError) {
       event_at: conflict.eventAt.toISOString(),
     })),
   });
+}
+
+function toGuardMedia(
+  media: Array<{ type: 'image' | 'video'; url: string }> | undefined,
+) {
+  return media?.map((item) => ({ type: item.type, url: item.url }));
+}
+
+function toThreadsMedia(
+  media:
+    | Array<{ type: 'image' | 'video'; url: string; alt_text?: string }>
+    | undefined,
+) {
+  return media?.map((item) => ({
+    type: item.type,
+    url: item.url,
+    ...(item.alt_text ? { altText: item.alt_text } : {}),
+  }));
 }
 
 export function buildMcpServer(dependencies: McpDependencies): McpServer {
@@ -106,7 +133,12 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
       const authorizationUrl = await dependencies.threads.createAuthorizationUrl();
 
       return {
-        content: [{ type: 'text', text: `Open this URL to grant Threads access: ${authorizationUrl}` }],
+        content: [
+          {
+            type: 'text',
+            text: `Open this URL to grant Threads access: ${authorizationUrl}`,
+          },
+        ],
         structuredContent: { provider, authorization_url: authorizationUrl },
       };
     },
@@ -157,7 +189,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
     'publish_post',
     {
       description:
-        'Publish text or one public HTTPS image to one connected social account. Exact duplicate content on the same provider is blocked within the configured guard window unless allow_duplicate is explicitly true.',
+        'Publish text, a single image/video, or a 2-20 item image/video carousel to one connected account. Exact duplicate content on the same provider is blocked within the configured guard window unless allow_duplicate is explicitly true.',
       inputSchema: postContentSchema.extend({
         account_id: z.string().uuid(),
         allow_duplicate: z.boolean().default(false),
@@ -174,11 +206,11 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
       }
 
       try {
-        const image = media?.[0];
+        const guardMedia = toGuardMedia(media);
         const guard = await dependencies.publishingGuard.check({
           socialAccountId: account_id,
           ...(text ? { text } : {}),
-          ...(image ? { media: [{ type: 'image', url: image.url }] } : {}),
+          ...(guardMedia?.length ? { media: guardMedia } : {}),
           targetAt: new Date(),
           allowDuplicate: allow_duplicate,
         });
@@ -187,17 +219,11 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
           return toolError(`Provider ${guard.provider} is not implemented for publishing yet.`);
         }
 
+        const threadsMedia = toThreadsMedia(media);
         const result = await dependencies.threads.publish({
           socialAccountId: account_id,
           ...(text ? { text } : {}),
-          ...(image
-            ? {
-                image: {
-                  url: image.url,
-                  ...(image.alt_text ? { altText: image.alt_text } : {}),
-                },
-              }
-            : {}),
+          ...(threadsMedia?.length ? { media: threadsMedia } : {}),
           contentFingerprint: guard.fingerprint,
         });
 
@@ -212,6 +238,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
             provider: 'threads',
             account_id: result.socialAccountId,
             provider_post_id: result.providerPostId,
+            media_count: media?.length ?? 0,
             quota_usage_before_publish: result.quota.usageBeforePublish,
             quota_total: result.quota.total,
             quota_duration_seconds: result.quota.durationSeconds,
@@ -231,7 +258,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
     'schedule_post',
     {
       description:
-        'Persist and schedule a social post for future server-side publishing. Exact duplicate content on the same provider is blocked near the target time unless allow_duplicate is explicitly true.',
+        'Persist and schedule text, a single image/video, or a 2-20 item carousel for future server-side publishing. Exact duplicate content on the same provider is blocked near the target time unless allow_duplicate is explicitly true.',
       inputSchema: postContentSchema.extend({
         account_id: z.string().uuid(),
         scheduled_at: z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
@@ -252,11 +279,11 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
 
       try {
         const scheduledAt = new Date(scheduled_at);
-        const image = media?.[0];
+        const guardMedia = toGuardMedia(media);
         const guard = await dependencies.publishingGuard.check({
           socialAccountId: account_id,
           ...(text ? { text } : {}),
-          ...(image ? { media: [{ type: 'image', url: image.url }] } : {}),
+          ...(guardMedia?.length ? { media: guardMedia } : {}),
           targetAt: scheduledAt,
           allowDuplicate: allow_duplicate,
         });
@@ -265,15 +292,11 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
           return toolError(`Provider ${guard.provider} is not implemented for scheduling yet.`);
         }
 
+        const threadsMedia = toThreadsMedia(media) ?? [];
         const scheduled = await dependencies.scheduler.schedule({
           socialAccountId: account_id,
           text: text ?? '',
-          media:
-            media?.map((item) => ({
-              type: 'image' as const,
-              url: item.url,
-              ...(item.alt_text ? { altText: item.alt_text } : {}),
-            })) ?? [],
+          media: threadsMedia,
           contentFingerprint: guard.fingerprint,
           scheduledAt,
         });
@@ -289,6 +312,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
             scheduled_post_id: scheduled.id,
             account_id: scheduled.socialAccountId,
             scheduled_at: scheduled.scheduledAt.toISOString(),
+            media_count: scheduled.media.length,
             status: scheduled.status,
           },
         };

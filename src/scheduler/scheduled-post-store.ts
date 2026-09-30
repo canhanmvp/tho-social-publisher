@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 
-export interface ScheduledImage {
-  type: 'image';
+export interface ScheduledMedia {
+  type: 'image' | 'video';
   url: string;
   altText?: string;
 }
@@ -10,7 +10,7 @@ export interface ScheduledPost {
   id: string;
   socialAccountId: string;
   text: string;
-  media: ScheduledImage[];
+  media: ScheduledMedia[];
   contentFingerprint: string | null;
   scheduledAt: Date;
   status: 'scheduled' | 'processing' | 'published' | 'failed' | 'cancelled';
@@ -24,7 +24,7 @@ interface ScheduledPostRow {
   id: string;
   social_account_id: string;
   body_text: string;
-  media: ScheduledImage[];
+  media: ScheduledMedia[];
   content_fingerprint: string | null;
   scheduled_at: Date;
   status: ScheduledPost['status'];
@@ -68,7 +68,7 @@ export class ScheduledPostStore {
   public async create(input: {
     socialAccountId: string;
     text: string;
-    media: ScheduledImage[];
+    media: ScheduledMedia[];
     contentFingerprint: string;
     scheduledAt: Date;
   }): Promise<ScheduledPost> {

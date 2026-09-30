@@ -155,17 +155,16 @@ export class SocialScheduler {
   }
 
   private async publishScheduled(post: ScheduledPost) {
-    const image = post.media[0];
-
     return this.threads.publish({
       socialAccountId: post.socialAccountId,
       ...(post.text ? { text: post.text } : {}),
-      ...(image
+      ...(post.media.length > 0
         ? {
-            image: {
-              url: image.url,
-              ...(image.altText ? { altText: image.altText } : {}),
-            },
+            media: post.media.map((item) => ({
+              type: item.type,
+              url: item.url,
+              ...(item.altText ? { altText: item.altText } : {}),
+            })),
           }
         : {}),
       ...(post.contentFingerprint ? { contentFingerprint: post.contentFingerprint } : {}),

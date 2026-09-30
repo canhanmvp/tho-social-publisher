@@ -30,6 +30,8 @@ This roadmap is intentionally capability-driven rather than date-driven.
 - [x] long-lived token refresh client
 - [x] text publishing with official API
 - [x] single-image publishing
+- [x] single-video publishing
+- [x] image/video carousel publishing (2-20 items)
 - [x] dynamic publishing quota check
 - [x] MCP `connect_social_account`
 - [x] MCP `disconnect_social_account` (local credential purge)
@@ -45,8 +47,6 @@ This roadmap is intentionally capability-driven rather than date-driven.
 - [x] explicit duplicate override for intentional reuse
 - [ ] provider-side authorization revocation (only after an official Threads revocation contract is verified)
 - [ ] live end-to-end verification with a real Meta Threads app
-- [ ] video publishing
-- [ ] carousel publishing
 - [ ] provider integration tests against a disposable test account
 
 Exit criterion: OAuth -> publish -> schedule -> refresh works reliably without manual token handling.

@@ -11,9 +11,11 @@ The implementation follows Meta's current Threads OAuth and publishing flow:
 3. exchange the short-lived token for a long-lived token using `GET https://graph.threads.net/access_token?grant_type=th_exchange_token`
 4. read the authenticated profile from `GET https://graph.threads.net/me`
 5. publish text using `POST https://graph.threads.net/me/threads` with `auto_publish_text=true`
-6. publish images by creating an IMAGE container, waiting until the container is ready, then calling `POST /me/threads_publish`
-7. inspect the live publishing budget using `GET /me/threads_publishing_limit?fields=quota_usage,config`
-8. refresh unexpired long-lived tokens with `GET https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token`
+6. create IMAGE or VIDEO media containers through `POST /me/threads`
+7. publish single media through `POST /me/threads_publish` after the container is ready
+8. build carousels by creating 2-20 image/video child containers with `is_carousel_item=true`, creating a CAROUSEL parent with the ordered child IDs, then publishing the parent
+9. inspect the live publishing budget using `GET /me/threads_publishing_limit?fields=quota_usage,config`
+10. refresh unexpired long-lived tokens with `GET https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token`
 
 The initial publishing scopes are intentionally minimal:
 
@@ -21,6 +23,36 @@ The initial publishing scopes are intentionally minimal:
 - `threads_content_publish`
 
 Reply-management scopes are deliberately not requested by the initial implementation.
+
+### Media behavior
+
+Media URLs must be public HTTPS URLs because Threads fetches the media from the supplied URL.
+
+The MCP `media` array accepts:
+
+```json
+[
+  {
+    "type": "image",
+    "url": "https://cdn.example.com/image.jpg",
+    "alt_text": "optional alt text"
+  }
+]
+```
+
+or video:
+
+```json
+[
+  {
+    "type": "video",
+    "url": "https://cdn.example.com/video.mp4",
+    "alt_text": "optional alt text"
+  }
+]
+```
+
+Two through twenty media items become a carousel and preserve the supplied order.
 
 ### Human setup in Meta
 
@@ -81,4 +113,4 @@ Alternatively, an authenticated MCP client can call `connect_social_account` wit
 - Provider tokens are never returned by MCP tools.
 - The MCP endpoint requires a separate bearer token.
 - The account connection UI requires separate owner Basic authentication.
-- Media URLs are passed to the provider; the current MCP schema accepts HTTPS URLs only.
+- Media URLs are passed to the provider; the MCP schema accepts HTTPS URLs only.

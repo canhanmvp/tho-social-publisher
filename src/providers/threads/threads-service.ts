@@ -2,21 +2,29 @@ import type { Buffer } from 'node:buffer';
 
 import type { OAuthStateStore } from '../../oauth/oauth-state-store.js';
 import { decryptSecret, encryptSecret } from '../../security/token-cipher.js';
-import type { PublishedMedia, ThreadsAccountStore, ThreadsCredentials } from './threads-account-store.js';
+import type {
+  PublishedMedia,
+  ThreadsAccountStore,
+  ThreadsCredentials,
+} from './threads-account-store.js';
 import { ThreadsApiError, ThreadsClient } from './threads-client.js';
 
 const REFRESH_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000;
 const MIN_REFRESH_AGE_MS = 24 * 60 * 60 * 1000;
-const IMAGE_READY_TIMEOUT_MS = 35_000;
-const IMAGE_POLL_INTERVAL_MS = 5_000;
+const MEDIA_READY_TIMEOUT_MS = 60_000;
+const MEDIA_POLL_INTERVAL_MS = 5_000;
+const MAX_CAROUSEL_ITEMS = 20;
+
+export interface ThreadsMedia {
+  type: 'image' | 'video';
+  url: string;
+  altText?: string;
+}
 
 export interface ThreadsPublishInput {
   socialAccountId: string;
   text?: string;
-  image?: {
-    url: string;
-    altText?: string;
-  };
+  media?: ThreadsMedia[];
   contentFingerprint?: string;
   scheduledPostId?: string;
 }
@@ -90,8 +98,14 @@ export class ThreadsService {
   }
 
   public async publish(input: ThreadsPublishInput): Promise<ThreadsPublishResult> {
-    if (!input.text?.trim() && !input.image) {
-      throw new Error('A Threads post requires text or an image.');
+    const media = input.media ?? [];
+
+    if (!input.text?.trim() && media.length === 0) {
+      throw new Error('A Threads post requires text or media.');
+    }
+
+    if (media.length > MAX_CAROUSEL_ITEMS) {
+      throw new Error(`Threads accepts at most ${MAX_CAROUSEL_ITEMS} carousel items.`);
     }
 
     const { credentials, accessToken } = await this.getUsableAccessToken(input.socialAccountId);
@@ -102,26 +116,28 @@ export class ThreadsService {
     }
 
     try {
-      const published = input.image
-        ? await this.publishImage(accessToken, input)
-        : await this.client.publishText(accessToken, input.text!);
+      let published: { id: string };
 
-      const media: PublishedMedia[] | undefined = input.image
-        ? [
-            {
-              type: 'image',
-              url: input.image.url,
-              ...(input.image.altText ? { altText: input.image.altText } : {}),
-            },
-          ]
-        : undefined;
+      if (media.length === 0) {
+        published = await this.client.publishText(accessToken, input.text!);
+      } else if (media.length === 1) {
+        published = await this.publishSingleMedia(accessToken, media[0]!, input.text);
+      } else {
+        published = await this.publishCarousel(accessToken, media, input.text);
+      }
+
+      const persistedMedia: PublishedMedia[] = media.map((item) => ({
+        type: item.type,
+        url: item.url,
+        ...(item.altText ? { altText: item.altText } : {}),
+      }));
 
       await this.accounts.recordPublishedPost({
         socialAccountId: input.socialAccountId,
         providerPostId: published.id,
         text: input.text ?? '',
         ...(input.contentFingerprint ? { contentFingerprint: input.contentFingerprint } : {}),
-        ...(media ? { media } : {}),
+        ...(persistedMedia.length > 0 ? { media: persistedMedia } : {}),
         ...(input.scheduledPostId ? { scheduledPostId: input.scheduledPostId } : {}),
       });
 
@@ -143,45 +159,84 @@ export class ThreadsService {
     }
   }
 
-  private async publishImage(
+  private async publishSingleMedia(
     accessToken: string,
-    input: ThreadsPublishInput,
+    media: ThreadsMedia,
+    text?: string,
   ): Promise<{ id: string }> {
-    if (!input.image) {
-      throw new Error('Image payload is missing.');
-    }
-
-    const container = await this.client.createImageContainer(accessToken, {
-      imageUrl: input.image.url,
-      ...(input.text ? { text: input.text } : {}),
-      ...(input.image.altText ? { altText: input.image.altText } : {}),
+    const container = await this.client.createMediaContainer(accessToken, {
+      type: media.type,
+      url: media.url,
+      ...(text ? { text } : {}),
+      ...(media.altText ? { altText: media.altText } : {}),
     });
 
-    const deadline = Date.now() + IMAGE_READY_TIMEOUT_MS;
+    await this.waitUntilReady(accessToken, [container.id]);
+    return this.client.publishContainer(accessToken, container.id);
+  }
 
-    while (Date.now() < deadline) {
-      const status = await this.client.getContainerStatus(accessToken, container.id);
-
-      if (status.status === 'FINISHED') {
-        return this.client.publishContainer(accessToken, container.id);
-      }
-
-      if (status.status === 'PUBLISHED') {
-        return { id: status.id };
-      }
-
-      if (status.status === 'ERROR' || status.status === 'EXPIRED') {
-        throw new Error(
-          `Threads image container ${status.status.toLowerCase()}: ${status.error_message ?? 'no provider error message'}`,
-        );
-      }
-
-      await delay(IMAGE_POLL_INTERVAL_MS);
+  private async publishCarousel(
+    accessToken: string,
+    media: ThreadsMedia[],
+    text?: string,
+  ): Promise<{ id: string }> {
+    if (media.length < 2 || media.length > MAX_CAROUSEL_ITEMS) {
+      throw new Error('Threads carousels require between 2 and 20 media items.');
     }
 
-    throw new Error(
-      'Threads image container was not ready within 35 seconds. Retry later instead of polling aggressively.',
-    );
+    const childIds: string[] = [];
+
+    for (const item of media) {
+      const child = await this.client.createMediaContainer(accessToken, {
+        type: item.type,
+        url: item.url,
+        isCarouselItem: true,
+        ...(item.altText ? { altText: item.altText } : {}),
+      });
+      childIds.push(child.id);
+    }
+
+    await this.waitUntilReady(accessToken, childIds);
+
+    const carousel = await this.client.createCarouselContainer(accessToken, {
+      children: childIds,
+      ...(text ? { text } : {}),
+    });
+
+    await this.waitUntilReady(accessToken, [carousel.id]);
+    return this.client.publishContainer(accessToken, carousel.id);
+  }
+
+  private async waitUntilReady(accessToken: string, containerIds: string[]): Promise<void> {
+    const pending = new Set(containerIds);
+    const deadline = Date.now() + MEDIA_READY_TIMEOUT_MS;
+
+    while (pending.size > 0 && Date.now() < deadline) {
+      for (const containerId of [...pending]) {
+        const status = await this.client.getContainerStatus(accessToken, containerId);
+
+        if (status.status === 'FINISHED' || status.status === 'PUBLISHED') {
+          pending.delete(containerId);
+          continue;
+        }
+
+        if (status.status === 'ERROR' || status.status === 'EXPIRED') {
+          throw new Error(
+            `Threads media container ${containerId} ${status.status.toLowerCase()}: ${status.error_message ?? 'no provider error message'}`,
+          );
+        }
+      }
+
+      if (pending.size > 0) {
+        await delay(MEDIA_POLL_INTERVAL_MS);
+      }
+    }
+
+    if (pending.size > 0) {
+      throw new Error(
+        `Threads media processing did not finish within 60 seconds for ${pending.size} container(s). Retry later rather than polling aggressively.`,
+      );
+    }
   }
 
   private async getUsableAccessToken(

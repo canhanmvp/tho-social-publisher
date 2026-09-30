@@ -47,6 +47,7 @@ const publishingQuotaSchema = z.object({
 
 export type ThreadsProfile = z.infer<typeof profileSchema>;
 export type ThreadsContainerStatus = z.infer<typeof containerStatusSchema>;
+export type ThreadsMediaType = 'image' | 'video';
 
 export interface ThreadsPublishingQuota {
   usage: number;
@@ -215,14 +216,21 @@ export class ThreadsClient {
     return { id: data.id };
   }
 
-  public async createImageContainer(
+  public async createMediaContainer(
     accessToken: string,
-    input: { imageUrl: string; text?: string; altText?: string },
+    input: {
+      type: ThreadsMediaType;
+      url: string;
+      text?: string;
+      altText?: string;
+      isCarouselItem?: boolean;
+    },
   ): Promise<{ id: string }> {
     const url = new URL('/me/threads', THREADS_GRAPH_URL);
+    const mediaType = input.type === 'image' ? 'IMAGE' : 'VIDEO';
 
-    url.searchParams.set('media_type', 'IMAGE');
-    url.searchParams.set('image_url', input.imageUrl);
+    url.searchParams.set('media_type', mediaType);
+    url.searchParams.set(input.type === 'image' ? 'image_url' : 'video_url', input.url);
 
     if (input.text) {
       url.searchParams.set('text', input.text);
@@ -230,6 +238,63 @@ export class ThreadsClient {
 
     if (input.altText) {
       url.searchParams.set('alt_text', input.altText);
+    }
+
+    if (input.isCarouselItem) {
+      url.searchParams.set('is_carousel_item', 'true');
+    }
+
+    const data = idResponseSchema.parse(
+      await this.requestJson(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }),
+    );
+
+    return { id: data.id };
+  }
+
+  public async createImageContainer(
+    accessToken: string,
+    input: { imageUrl: string; text?: string; altText?: string },
+  ): Promise<{ id: string }> {
+    return this.createMediaContainer(accessToken, {
+      type: 'image',
+      url: input.imageUrl,
+      ...(input.text ? { text: input.text } : {}),
+      ...(input.altText ? { altText: input.altText } : {}),
+    });
+  }
+
+  public async createVideoContainer(
+    accessToken: string,
+    input: { videoUrl: string; text?: string; altText?: string },
+  ): Promise<{ id: string }> {
+    return this.createMediaContainer(accessToken, {
+      type: 'video',
+      url: input.videoUrl,
+      ...(input.text ? { text: input.text } : {}),
+      ...(input.altText ? { altText: input.altText } : {}),
+    });
+  }
+
+  public async createCarouselContainer(
+    accessToken: string,
+    input: { children: string[]; text?: string },
+  ): Promise<{ id: string }> {
+    if (input.children.length < 2 || input.children.length > 20) {
+      throw new Error('Threads carousels require between 2 and 20 child containers.');
+    }
+
+    const url = new URL('/me/threads', THREADS_GRAPH_URL);
+
+    url.searchParams.set('media_type', 'CAROUSEL');
+    url.searchParams.set('children', input.children.join(','));
+
+    if (input.text) {
+      url.searchParams.set('text', input.text);
     }
 
     const data = idResponseSchema.parse(

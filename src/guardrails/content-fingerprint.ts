@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 export interface FingerprintMedia {
-  type: 'image';
+  type: 'image' | 'video';
   url: string;
 }
 

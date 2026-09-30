@@ -16,7 +16,7 @@ export interface SavedThreadsAccount {
 }
 
 export interface PublishedMedia {
-  type: 'image';
+  type: 'image' | 'video';
   url: string;
   altText?: string;
 }
