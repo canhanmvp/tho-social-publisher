@@ -135,6 +135,10 @@ export class SocialScheduler {
     return this.posts.list(limit);
   }
 
+  public async get(postId: string): Promise<ScheduledPost | null> {
+    return this.posts.get(postId);
+  }
+
   public async cancel(postId: string): Promise<boolean> {
     const cancelled = await this.posts.cancel(postId);
 

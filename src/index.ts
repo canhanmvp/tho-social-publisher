@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { serve } from '@hono/node-server';
 
 import { assertSecurityConfig, getThreadsRuntimeConfig, loadConfig } from './config.js';
+import { PublishedPostStore } from './db/published-post-store.js';
 import { createPool } from './db/pool.js';
 import { PostgresSocialAccountStore } from './db/social-account-store.js';
 import { createApp } from './http/app.js';
@@ -20,6 +21,7 @@ async function main(): Promise<void> {
 
   const pool = createPool(config.DATABASE_URL);
   const socialAccounts = new PostgresSocialAccountStore(pool);
+  const publishedPosts = new PublishedPostStore(pool);
   const threadsRuntime = getThreadsRuntimeConfig(config);
 
   let threads: ThreadsService | undefined;
@@ -57,6 +59,7 @@ async function main(): Promise<void> {
     config,
     pool,
     socialAccounts,
+    publishedPosts,
     ...(threads ? { threads } : {}),
     ...(scheduler ? { scheduler } : {}),
   });

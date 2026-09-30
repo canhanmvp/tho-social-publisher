@@ -3,6 +3,7 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 import type { Pool } from 'pg';
 
 import type { AppConfig } from '../config.js';
+import type { PublishedPostStore } from '../db/published-post-store.js';
 import { checkDatabase } from '../db/pool.js';
 import type { SocialAccountStore } from '../db/social-account-store.js';
 import { buildMcpServer } from '../mcp/build-server.js';
@@ -14,6 +15,7 @@ interface AppDependencies {
   config: AppConfig;
   pool: Pool;
   socialAccounts: SocialAccountStore;
+  publishedPosts: PublishedPostStore;
   threads?: ThreadsService;
   scheduler?: SocialScheduler;
 }
@@ -87,7 +89,14 @@ function renderConnectPage(
 </html>`;
 }
 
-export function createApp({ config, pool, socialAccounts, threads, scheduler }: AppDependencies) {
+export function createApp({
+  config,
+  pool,
+  socialAccounts,
+  publishedPosts,
+  threads,
+  scheduler,
+}: AppDependencies) {
   const app = createMcpHonoApp({
     host: config.HOST,
     allowedHosts: config.allowedHosts,
@@ -97,6 +106,7 @@ export function createApp({ config, pool, socialAccounts, threads, scheduler }: 
   const mcpHandler = createMcpHandler(() =>
     buildMcpServer({
       socialAccounts,
+      publishedPosts,
       ...(threads ? { threads } : {}),
       ...(scheduler ? { scheduler } : {}),
     }),
@@ -136,7 +146,7 @@ export function createApp({ config, pool, socialAccounts, threads, scheduler }: 
       return context.text('Owner authentication required.', 401);
     }
 
-    const accounts = await socialAccounts.list();
+    const accounts = await socialAccounts.list(true);
 
     return context.html(
       renderConnectPage(accounts, Boolean(threads), context.req.query('connected')),
