@@ -6,6 +6,7 @@ import { assertSecurityConfig, getThreadsRuntimeConfig, loadConfig } from './con
 import { PublishedPostStore } from './db/published-post-store.js';
 import { createPool } from './db/pool.js';
 import { PostgresSocialAccountStore } from './db/social-account-store.js';
+import { PublishingGuard } from './guardrails/publishing-guard.js';
 import { createApp } from './http/app.js';
 import { OAuthStateStore } from './oauth/oauth-state-store.js';
 import { ThreadsAccountStore } from './providers/threads/threads-account-store.js';
@@ -22,6 +23,7 @@ async function main(): Promise<void> {
   const pool = createPool(config.DATABASE_URL);
   const socialAccounts = new PostgresSocialAccountStore(pool);
   const publishedPosts = new PublishedPostStore(pool);
+  const publishingGuard = new PublishingGuard(pool, config.DUPLICATE_GUARD_HOURS);
   const threadsRuntime = getThreadsRuntimeConfig(config);
 
   let threads: ThreadsService | undefined;
@@ -60,16 +62,13 @@ async function main(): Promise<void> {
     pool,
     socialAccounts,
     publishedPosts,
+    publishingGuard,
     ...(threads ? { threads } : {}),
     ...(scheduler ? { scheduler } : {}),
   });
 
   const server = serve(
-    {
-      fetch: app.fetch,
-      hostname: config.HOST,
-      port: config.PORT,
-    },
+    { fetch: app.fetch, hostname: config.HOST, port: config.PORT },
     (info) => {
       console.log(
         `[server] Tho Social Publisher listening on http://${info.address}:${info.port}${config.MCP_PATH}`,
@@ -99,9 +98,7 @@ async function main(): Promise<void> {
   }
 
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.once(signal, () => {
-      void shutdown(signal);
-    });
+    process.once(signal, () => void shutdown(signal));
   }
 }
 

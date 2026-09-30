@@ -131,6 +131,7 @@ export class ThreadsAccountStore {
     socialAccountId: string;
     providerPostId: string;
     text: string;
+    contentFingerprint?: string;
     media?: PublishedMedia[];
     scheduledPostId?: string;
   }): Promise<void> {
@@ -140,9 +141,10 @@ export class ThreadsAccountStore {
           scheduled_post_id,
           provider_post_id,
           body_text,
-          media
+          media,
+          content_fingerprint
         )
-       VALUES ($1, $2, $3, $4, $5::jsonb)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6)
        ON CONFLICT (provider_post_id, social_account_id) DO NOTHING`,
       [
         input.socialAccountId,
@@ -150,6 +152,7 @@ export class ThreadsAccountStore {
         input.providerPostId,
         input.text,
         JSON.stringify(input.media ?? []),
+        input.contentFingerprint ?? null,
       ],
     );
   }
