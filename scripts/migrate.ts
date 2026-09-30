@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -18,16 +20,22 @@ async function migrate(): Promise<void> {
     `);
 
     const migrationsDirectory = resolve(process.cwd(), 'migrations');
-    const migrationFiles = (await readdir(migrationsDirectory)).filter((name) => name.endsWith('.sql')).sort();
+    const migrationFiles = (await readdir(migrationsDirectory))
+      .filter((name) => name.endsWith('.sql'))
+      .sort();
 
     for (const name of migrationFiles) {
       const alreadyApplied = await client.query<{ exists: boolean }>(
         'SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = $1) AS exists',
         [name],
       );
-      if (alreadyApplied.rows[0]?.exists) continue;
+
+      if (alreadyApplied.rows[0]?.exists) {
+        continue;
+      }
 
       const sql = await readFile(resolve(migrationsDirectory, name), 'utf8');
+
       console.log(`[migrate] applying ${name}`);
 
       await client.query('BEGIN');
@@ -49,9 +57,11 @@ async function migrate(): Promise<void> {
 }
 
 migrate().catch((error: unknown) => {
-  const details = error instanceof Error
-    ? { name: error.name, message: error.message }
-    : { message: 'Unknown error' };
+  const details =
+    error instanceof Error
+      ? { name: error.name, message: error.message }
+      : { message: 'Unknown error' };
+
   console.error('[migrate] failed', details);
   process.exitCode = 1;
 });

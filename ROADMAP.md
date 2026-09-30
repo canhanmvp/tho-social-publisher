@@ -16,22 +16,28 @@ This roadmap is intentionally capability-driven rather than date-driven.
 - [x] MCP server skeleton
 - [x] Connection UI skeleton
 - [x] CI: lint, typecheck, tests, secret scanning
+- [x] MCP bearer authentication
+- [x] owner authentication for the connection UI
 
 ## Phase 1 — Threads end-to-end
 
-- [ ] Verify current official Threads API endpoints, scopes, token lifecycle, and quotas
-- [ ] OAuth connect
-- [ ] OAuth callback/state validation
-- [ ] account discovery
-- [ ] encrypted token storage
-- [ ] token refresh
-- [ ] text publishing
+- [x] Verify current Threads OAuth, publishing, profile, and long-lived token contracts
+- [x] OAuth authorization URL
+- [x] OAuth callback/state validation
+- [x] account discovery via authenticated profile
+- [x] encrypted token storage
+- [x] long-lived token exchange
+- [x] long-lived token refresh client
+- [x] text publishing with official API
+- [x] text reply publishing through `reply_to_id`
+- [x] MCP `connect_social_account`
+- [x] MCP `publish_post` for Threads text
+- [ ] live end-to-end verification with a real Meta Threads app
 - [ ] image publishing
-- [ ] replies where officially supported
 - [ ] scheduled publishing with pg-boss
 - [ ] publishing quota / error handling
 - [ ] disconnect / token revocation
-- [ ] provider mocks and integration tests
+- [ ] provider integration tests against a disposable test account
 
 Exit criterion: OAuth -> publish -> schedule -> refresh works reliably without manual token handling.
 
