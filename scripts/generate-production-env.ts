@@ -1,5 +1,6 @@
 import { access, chmod, readFile, writeFile } from 'node:fs/promises';
-import { constants, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import { constants } from 'node:fs';
 import { resolve } from 'node:path';
 
 function readArgument(name: string): string | undefined {
