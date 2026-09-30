@@ -2,11 +2,48 @@ import type { Buffer } from 'node:buffer';
 
 import type { OAuthStateStore } from '../../oauth/oauth-state-store.js';
 import { decryptSecret, encryptSecret } from '../../security/token-cipher.js';
-import type { ThreadsAccountStore } from './threads-account-store.js';
+import type { PublishedMedia, ThreadsAccountStore } from './threads-account-store.js';
 import { ThreadsApiError, ThreadsClient } from './threads-client.js';
 
 const REFRESH_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000;
 const MIN_REFRESH_AGE_MS = 24 * 60 * 60 * 1000;
+const IMAGE_READY_TIMEOUT_MS = 35_000;
+const IMAGE_POLL_INTERVAL_MS = 5_000;
+
+export interface ThreadsPublishInput {
+  socialAccountId: string;
+  text?: string;
+  image?: {
+    url: string;
+    altText?: string;
+  };
+  scheduledPostId?: string;
+}
+
+export interface ThreadsPublishResult {
+  providerPostId: string;
+  socialAccountId: string;
+  quota: {
+    usageBeforePublish: number;
+    total: number;
+    durationSeconds: number;
+  };
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export class ThreadsQuotaError extends Error {
+  public constructor(
+    public readonly usage: number,
+    public readonly total: number,
+    public readonly durationSeconds: number,
+  ) {
+    super(`Threads publishing quota exhausted (${usage}/${total}).`);
+    this.name = 'ThreadsQuotaError';
+  }
+}
 
 export class ThreadsService {
   public constructor(
@@ -51,12 +88,107 @@ export class ThreadsService {
     });
   }
 
-  public async publishText(input: {
-    socialAccountId: string;
-    text: string;
-    replyToId?: string;
-  }): Promise<{ providerPostId: string; socialAccountId: string }> {
-    const credentials = await this.accounts.getCredentials(input.socialAccountId);
+  public async publish(input: ThreadsPublishInput): Promise<ThreadsPublishResult> {
+    if (!input.text?.trim() && !input.image) {
+      throw new Error('A Threads post requires text or an image.');
+    }
+
+    const { credentials, accessToken } = await this.getUsableAccessToken(input.socialAccountId);
+    const quota = await this.client.getPublishingQuota(accessToken);
+
+    if (quota.usage >= quota.total) {
+      throw new ThreadsQuotaError(quota.usage, quota.total, quota.durationSeconds);
+    }
+
+    try {
+      const published = input.image
+        ? await this.publishImage(accessToken, input)
+        : await this.client.publishText(accessToken, input.text!);
+
+      const media: PublishedMedia[] | undefined = input.image
+        ? [
+            {
+              type: 'image',
+              url: input.image.url,
+              ...(input.image.altText ? { altText: input.image.altText } : {}),
+            },
+          ]
+        : undefined;
+
+      await this.accounts.recordPublishedPost({
+        socialAccountId: input.socialAccountId,
+        providerPostId: published.id,
+        text: input.text ?? '',
+        ...(media ? { media } : {}),
+        ...(input.scheduledPostId ? { scheduledPostId: input.scheduledPostId } : {}),
+      });
+
+      return {
+        providerPostId: published.id,
+        socialAccountId: input.socialAccountId,
+        quota: {
+          usageBeforePublish: quota.usage,
+          total: quota.total,
+          durationSeconds: quota.durationSeconds,
+        },
+      };
+    } catch (error) {
+      if (error instanceof ThreadsApiError && (error.status === 401 || error.status === 403)) {
+        await this.accounts.markReauthRequired(credentials.oauthAccountId);
+      }
+
+      throw error;
+    }
+  }
+
+  private async publishImage(
+    accessToken: string,
+    input: ThreadsPublishInput,
+  ): Promise<{ id: string }> {
+    if (!input.image) {
+      throw new Error('Image payload is missing.');
+    }
+
+    const container = await this.client.createImageContainer(accessToken, {
+      imageUrl: input.image.url,
+      ...(input.text ? { text: input.text } : {}),
+      ...(input.image.altText ? { altText: input.image.altText } : {}),
+    });
+
+    const deadline = Date.now() + IMAGE_READY_TIMEOUT_MS;
+
+    while (Date.now() < deadline) {
+      const status = await this.client.getContainerStatus(accessToken, container.id);
+
+      if (status.status === 'FINISHED') {
+        return this.client.publishContainer(accessToken, container.id);
+      }
+
+      if (status.status === 'PUBLISHED') {
+        return { id: status.id };
+      }
+
+      if (status.status === 'ERROR' || status.status === 'EXPIRED') {
+        throw new Error(
+          `Threads image container ${status.status.toLowerCase()}: ${status.error_message ?? 'no provider error message'}`,
+        );
+      }
+
+      await delay(IMAGE_POLL_INTERVAL_MS);
+    }
+
+    throw new Error(
+      'Threads image container was not ready within 35 seconds. Retry later instead of polling aggressively.',
+    );
+  }
+
+  private async getUsableAccessToken(
+    socialAccountId: string,
+  ): Promise<{
+    credentials: Awaited<ReturnType<ThreadsAccountStore['getCredentials']>> & {};
+    accessToken: string;
+  }> {
+    const credentials = await this.accounts.getCredentials(socialAccountId);
 
     if (!credentials) {
       throw new Error('No active Threads connection exists for this social account.');
@@ -78,32 +210,16 @@ export class ThreadsService {
         await this.accounts.updateToken(credentials.oauthAccountId, encrypted, expiresAt);
         accessToken = refreshed.accessToken;
       } catch (error) {
-        if (credentials.expiresAt && credentials.expiresAt.getTime() <= Date.now() + 24 * 60 * 60 * 1000) {
+        if (
+          credentials.expiresAt &&
+          credentials.expiresAt.getTime() <= Date.now() + 24 * 60 * 60 * 1000
+        ) {
           throw error;
         }
       }
     }
 
-    try {
-      const published = await this.client.publishText(accessToken, input.text, input.replyToId);
-
-      await this.accounts.recordPublishedText({
-        socialAccountId: input.socialAccountId,
-        providerPostId: published.id,
-        text: input.text,
-      });
-
-      return {
-        providerPostId: published.id,
-        socialAccountId: input.socialAccountId,
-      };
-    } catch (error) {
-      if (error instanceof ThreadsApiError && (error.status === 401 || error.status === 403)) {
-        await this.accounts.markReauthRequired(credentials.oauthAccountId);
-      }
-
-      throw error;
-    }
+    return { credentials, accessToken };
   }
 
   private shouldRefresh(expiresAt: Date | null, tokenUpdatedAt: Date): boolean {

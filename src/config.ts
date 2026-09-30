@@ -20,6 +20,7 @@ const envSchema = z.object({
   THREADS_CLIENT_ID: optionalNonEmptyString,
   THREADS_CLIENT_SECRET: optionalNonEmptyString,
   THREADS_REDIRECT_URI: z.string().url().optional(),
+  JOB_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(2),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
 

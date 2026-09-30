@@ -5,15 +5,17 @@ import type { Pool } from 'pg';
 import type { AppConfig } from '../config.js';
 import { checkDatabase } from '../db/pool.js';
 import type { SocialAccountStore } from '../db/social-account-store.js';
-import { isBearerAuthorized, isOwnerAuthorized } from './auth.js';
 import { buildMcpServer } from '../mcp/build-server.js';
 import type { ThreadsService } from '../providers/threads/threads-service.js';
+import type { SocialScheduler } from '../scheduler/social-scheduler.js';
+import { isBearerAuthorized, isOwnerAuthorized } from './auth.js';
 
 interface AppDependencies {
   config: AppConfig;
   pool: Pool;
   socialAccounts: SocialAccountStore;
   threads?: ThreadsService;
+  scheduler?: SocialScheduler;
 }
 
 function escapeHtml(value: string): string {
@@ -85,14 +87,20 @@ function renderConnectPage(
 </html>`;
 }
 
-export function createApp({ config, pool, socialAccounts, threads }: AppDependencies) {
+export function createApp({ config, pool, socialAccounts, threads, scheduler }: AppDependencies) {
   const app = createMcpHonoApp({
     host: config.HOST,
     allowedHosts: config.allowedHosts,
     ...(config.allowedOrigins.length > 0 ? { allowedOrigins: config.allowedOrigins } : {}),
   });
 
-  const mcpHandler = createMcpHandler(() => buildMcpServer({ socialAccounts, ...(threads ? { threads } : {}) }));
+  const mcpHandler = createMcpHandler(() =>
+    buildMcpServer({
+      socialAccounts,
+      ...(threads ? { threads } : {}),
+      ...(scheduler ? { scheduler } : {}),
+    }),
+  );
 
   app.get('/', (context) =>
     context.json({
@@ -103,6 +111,7 @@ export function createApp({ config, pool, socialAccounts, threads }: AppDependen
       providers: {
         threads: Boolean(threads),
       },
+      scheduling: Boolean(scheduler),
     }),
   );
 

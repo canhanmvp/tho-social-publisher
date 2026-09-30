@@ -15,6 +15,12 @@ export interface SavedThreadsAccount {
   username: string;
 }
 
+export interface PublishedMedia {
+  type: 'image';
+  url: string;
+  altText?: string;
+}
+
 export class ThreadsAccountStore {
   public constructor(private readonly pool: Pool) {}
 
@@ -119,20 +125,30 @@ export class ThreadsAccountStore {
     );
   }
 
-  public async recordPublishedText(input: {
+  public async recordPublishedPost(input: {
     socialAccountId: string;
     providerPostId: string;
     text: string;
+    media?: PublishedMedia[];
+    scheduledPostId?: string;
   }): Promise<void> {
     await this.pool.query(
       `INSERT INTO published_posts (
           social_account_id,
+          scheduled_post_id,
           provider_post_id,
-          body_text
+          body_text,
+          media
         )
-       VALUES ($1, $2, $3)
+       VALUES ($1, $2, $3, $4, $5::jsonb)
        ON CONFLICT (provider_post_id, social_account_id) DO NOTHING`,
-      [input.socialAccountId, input.providerPostId, input.text],
+      [
+        input.socialAccountId,
+        input.scheduledPostId ?? null,
+        input.providerPostId,
+        input.text,
+        JSON.stringify(input.media ?? []),
+      ],
     );
   }
 

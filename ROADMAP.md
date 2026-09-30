@@ -21,7 +21,7 @@ This roadmap is intentionally capability-driven rather than date-driven.
 
 ## Phase 1 — Threads end-to-end
 
-- [x] Verify current Threads OAuth, publishing, profile, and long-lived token contracts
+- [x] Verify current Threads OAuth, publishing, profile, media-status, and quota contracts
 - [x] OAuth authorization URL
 - [x] OAuth callback/state validation
 - [x] account discovery via authenticated profile
@@ -29,13 +29,18 @@ This roadmap is intentionally capability-driven rather than date-driven.
 - [x] long-lived token exchange
 - [x] long-lived token refresh client
 - [x] text publishing with official API
-- [x] text reply publishing through `reply_to_id`
+- [x] single-image publishing
+- [x] dynamic publishing quota check
 - [x] MCP `connect_social_account`
-- [x] MCP `publish_post` for Threads text
+- [x] MCP `publish_post`
+- [x] scheduled publishing with pg-boss
+- [x] MCP `schedule_post`
+- [x] MCP `list_scheduled_posts`
+- [x] MCP `cancel_scheduled_post`
+- [x] bounded retry with exponential backoff
 - [ ] live end-to-end verification with a real Meta Threads app
-- [ ] image publishing
-- [ ] scheduled publishing with pg-boss
-- [ ] publishing quota / error handling
+- [ ] video publishing
+- [ ] carousel publishing
 - [ ] disconnect / token revocation
 - [ ] provider integration tests against a disposable test account
 
@@ -75,7 +80,7 @@ Exit criterion: OAuth -> publish -> schedule -> refresh works reliably without m
 
 - [ ] duplicate-content fingerprinting
 - [ ] account-specific posting budgets
-- [ ] bounded retries + dead-letter handling
+- [ ] dead-letter operations
 - [ ] provider health state
 - [ ] audit logs
 - [ ] observability / metrics

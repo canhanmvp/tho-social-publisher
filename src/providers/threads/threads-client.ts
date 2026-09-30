@@ -21,11 +21,38 @@ const profileSchema = z.object({
   threads_profile_picture_url: z.string().url().optional(),
 });
 
-const publishResponseSchema = z.object({
+const idResponseSchema = z.object({
   id: z.union([z.string(), z.number()]).transform(String),
 });
 
+const containerStatusSchema = z.object({
+  id: z.union([z.string(), z.number()]).transform(String),
+  status: z.enum(['EXPIRED', 'ERROR', 'FINISHED', 'IN_PROGRESS', 'PUBLISHED']),
+  error_message: z.string().optional(),
+});
+
+const publishingQuotaSchema = z.object({
+  data: z
+    .array(
+      z.object({
+        quota_usage: z.coerce.number().nonnegative(),
+        config: z.object({
+          quota_total: z.coerce.number().positive(),
+          quota_duration: z.coerce.number().positive(),
+        }),
+      }),
+    )
+    .min(1),
+});
+
 export type ThreadsProfile = z.infer<typeof profileSchema>;
+export type ThreadsContainerStatus = z.infer<typeof containerStatusSchema>;
+
+export interface ThreadsPublishingQuota {
+  usage: number;
+  total: number;
+  durationSeconds: number;
+}
 
 export interface ThreadsClientConfig {
   clientId: string;
@@ -138,10 +165,7 @@ export class ThreadsClient {
 
   public async getProfile(accessToken: string): Promise<ThreadsProfile> {
     const url = new URL('/me', THREADS_GRAPH_URL);
-    url.searchParams.set(
-      'fields',
-      'id,username,name,threads_profile_picture_url',
-    );
+    url.searchParams.set('fields', 'id,username,name,threads_profile_picture_url');
 
     return profileSchema.parse(
       await this.requestJson(url, {
@@ -152,22 +176,98 @@ export class ThreadsClient {
     );
   }
 
-  public async publishText(
-    accessToken: string,
-    text: string,
-    replyToId?: string,
-  ): Promise<{ id: string }> {
+  public async getPublishingQuota(accessToken: string): Promise<ThreadsPublishingQuota> {
+    const url = new URL('/me/threads_publishing_limit', THREADS_GRAPH_URL);
+    url.searchParams.set('fields', 'quota_usage,config');
+
+    const data = publishingQuotaSchema.parse(
+      await this.requestJson(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }),
+    );
+    const quota = data.data[0]!;
+
+    return {
+      usage: quota.quota_usage,
+      total: quota.config.quota_total,
+      durationSeconds: quota.config.quota_duration,
+    };
+  }
+
+  public async publishText(accessToken: string, text: string): Promise<{ id: string }> {
     const url = new URL('/me/threads', THREADS_GRAPH_URL);
 
     url.searchParams.set('media_type', 'TEXT');
     url.searchParams.set('text', text);
     url.searchParams.set('auto_publish_text', 'true');
 
-    if (replyToId) {
-      url.searchParams.set('reply_to_id', replyToId);
+    const data = idResponseSchema.parse(
+      await this.requestJson(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }),
+    );
+
+    return { id: data.id };
+  }
+
+  public async createImageContainer(
+    accessToken: string,
+    input: { imageUrl: string; text?: string; altText?: string },
+  ): Promise<{ id: string }> {
+    const url = new URL('/me/threads', THREADS_GRAPH_URL);
+
+    url.searchParams.set('media_type', 'IMAGE');
+    url.searchParams.set('image_url', input.imageUrl);
+
+    if (input.text) {
+      url.searchParams.set('text', input.text);
     }
 
-    const data = publishResponseSchema.parse(
+    if (input.altText) {
+      url.searchParams.set('alt_text', input.altText);
+    }
+
+    const data = idResponseSchema.parse(
+      await this.requestJson(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }),
+    );
+
+    return { id: data.id };
+  }
+
+  public async getContainerStatus(
+    accessToken: string,
+    containerId: string,
+  ): Promise<ThreadsContainerStatus> {
+    const url = new URL(`/${encodeURIComponent(containerId)}`, THREADS_GRAPH_URL);
+    url.searchParams.set('fields', 'id,status,error_message');
+
+    return containerStatusSchema.parse(
+      await this.requestJson(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }),
+    );
+  }
+
+  public async publishContainer(
+    accessToken: string,
+    containerId: string,
+  ): Promise<{ id: string }> {
+    const url = new URL('/me/threads_publish', THREADS_GRAPH_URL);
+    url.searchParams.set('creation_id', containerId);
+
+    const data = idResponseSchema.parse(
       await this.requestJson(url, {
         method: 'POST',
         headers: {
@@ -211,7 +311,10 @@ export class ThreadsClient {
     }
 
     if (body === undefined) {
-      throw new ThreadsApiError('Threads API returned an empty or invalid JSON response.', response.status);
+      throw new ThreadsApiError(
+        'Threads API returned an empty or invalid JSON response.',
+        response.status,
+      );
     }
 
     return body;
