@@ -71,7 +71,8 @@ export class ThreadsAccountStore {
           AND sa.provider = 'threads'
           AND oa.provider = 'threads'
           AND sa.status = 'active'
-          AND oa.status = 'active'`,
+          AND oa.status = 'active'
+          AND oa.access_token_encrypted IS NOT NULL`,
       [socialAccountId],
     );
 
@@ -98,6 +99,7 @@ export class ThreadsAccountStore {
           SET access_token_encrypted = $2,
               expires_at = $3,
               status = 'active',
+              disconnected_at = NULL,
               updated_at = now()
         WHERE id = $1
           AND provider = 'threads'`,
@@ -176,9 +178,11 @@ export class ThreadsAccountStore {
        DO UPDATE SET
           account_name = EXCLUDED.account_name,
           access_token_encrypted = EXCLUDED.access_token_encrypted,
+          refresh_token_encrypted = NULL,
           expires_at = EXCLUDED.expires_at,
           scopes = EXCLUDED.scopes,
           status = 'active',
+          disconnected_at = NULL,
           updated_at = now()
        RETURNING id`,
       [

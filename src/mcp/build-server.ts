@@ -1,15 +1,19 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
+import type { PublishedPostStore } from '../db/published-post-store.js';
 import type { SocialAccountStore } from '../db/social-account-store.js';
 import type { ThreadsService } from '../providers/threads/threads-service.js';
 import type { SocialScheduler } from '../scheduler/social-scheduler.js';
 
 export interface McpDependencies {
   socialAccounts: SocialAccountStore;
+  publishedPosts: PublishedPostStore;
   threads?: ThreadsService;
   scheduler?: SocialScheduler;
 }
+
+const providerSchema = z.enum(['threads', 'instagram', 'facebook', 'linkedin', 'tiktok', 'x']);
 
 const imageSchema = z.object({
   type: z.literal('image'),
@@ -51,10 +55,14 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
   server.registerTool(
     'list_social_accounts',
     {
-      description: 'List social accounts connected to this self-hosted Tho Social Publisher instance.',
+      description:
+        'List social accounts connected to this self-hosted Tho Social Publisher instance. Inactive accounts are hidden by default.',
+      inputSchema: z.object({
+        include_inactive: z.boolean().default(false),
+      }),
     },
-    async () => {
-      const accounts = await dependencies.socialAccounts.list();
+    async ({ include_inactive }) => {
+      const accounts = await dependencies.socialAccounts.list(include_inactive);
 
       return {
         content: [{ type: 'text', text: JSON.stringify({ accounts }, null, 2) }],
@@ -89,6 +97,47 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
         structuredContent: {
           provider,
           authorization_url: authorizationUrl,
+        },
+      };
+    },
+  );
+
+  server.registerTool(
+    'disconnect_social_account',
+    {
+      description:
+        'Disconnect one local social account. Pending scheduled posts are cancelled. Stored provider credentials are purged when no other active account shares them. This does not claim to revoke provider-side authorization unless an adapter explicitly supports it.',
+      inputSchema: z.object({
+        account_id: z.string().uuid(),
+      }),
+      annotations: {
+        title: 'Disconnect social account',
+        destructiveHint: true,
+        idempotentHint: true,
+      },
+    },
+    async ({ account_id }) => {
+      const result = await dependencies.socialAccounts.disconnect(account_id);
+
+      if (!result) {
+        return toolError('Social account was not found.');
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Disconnected ${result.provider} account ${result.accountName}. Cancelled ${result.cancelledScheduledPosts} pending scheduled post(s).`,
+          },
+        ],
+        structuredContent: {
+          account_id: result.accountId,
+          provider: result.provider,
+          account_name: result.accountName,
+          cancelled_scheduled_posts: result.cancelledScheduledPosts,
+          local_credential_purged: result.credentialPurged,
+          provider_authorization_revoked: false,
+          remaining_active_accounts_on_credential: result.remainingActiveAccountsOnCredential,
         },
       };
     },
@@ -229,6 +278,79 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
         attempts: post.attempts,
         provider_post_id: post.providerPostId,
         last_error: post.lastError,
+      }));
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ posts: output }, null, 2) }],
+        structuredContent: { posts: output },
+      };
+    },
+  );
+
+  server.registerTool(
+    'get_post_status',
+    {
+      description:
+        'Get the local status of a scheduled publication. This reports scheduler state, not a fresh remote-provider fetch.',
+      inputSchema: z.object({
+        scheduled_post_id: z.string().uuid(),
+      }),
+    },
+    async ({ scheduled_post_id }) => {
+      if (!dependencies.scheduler) {
+        return toolError('Server-side scheduling is not configured.');
+      }
+
+      const post = await dependencies.scheduler.get(scheduled_post_id);
+
+      if (!post) {
+        return toolError('Scheduled post was not found.');
+      }
+
+      const output = {
+        scheduled_post_id: post.id,
+        account_id: post.socialAccountId,
+        status: post.status,
+        attempts: post.attempts,
+        scheduled_at: post.scheduledAt.toISOString(),
+        provider_post_id: post.providerPostId,
+        last_error: post.lastError,
+      };
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify(output, null, 2) }],
+        structuredContent: output,
+      };
+    },
+  );
+
+  server.registerTool(
+    'get_recent_posts',
+    {
+      description:
+        'List posts successfully published through this server. Results come from local publication history, not a provider-wide timeline.',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(200).default(50),
+        account_id: z.string().uuid().optional(),
+        provider: providerSchema.optional(),
+      }),
+    },
+    async ({ limit, account_id, provider }) => {
+      const posts = await dependencies.publishedPosts.listRecent({
+        limit,
+        ...(account_id ? { accountId: account_id } : {}),
+        ...(provider ? { provider } : {}),
+      });
+      const output = posts.map((post) => ({
+        id: post.id,
+        provider: post.provider,
+        account_id: post.socialAccountId,
+        account_name: post.accountName,
+        provider_post_id: post.providerPostId,
+        text: post.text,
+        media: post.media,
+        scheduled_post_id: post.scheduledPostId,
+        published_at: post.publishedAt.toISOString(),
       }));
 
       return {
