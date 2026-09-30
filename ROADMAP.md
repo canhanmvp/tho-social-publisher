@@ -10,15 +10,16 @@ This roadmap is intentionally capability-driven rather than date-driven.
 - [x] Contributor guidance
 - [x] Agent development instructions
 - [x] Environment template
-- [ ] TypeScript workspace
-- [ ] Docker Compose
-- [ ] PostgreSQL migrations
-- [ ] MCP server skeleton
-- [ ] Connection UI skeleton
-- [ ] CI: lint, typecheck, tests, secret scanning
+- [x] TypeScript workspace
+- [x] Docker Compose
+- [x] PostgreSQL migrations
+- [x] MCP server skeleton
+- [x] Connection UI skeleton
+- [x] CI: lint, typecheck, tests, secret scanning
 
 ## Phase 1 — Threads end-to-end
 
+- [ ] Verify current official Threads API endpoints, scopes, token lifecycle, and quotas
 - [ ] OAuth connect
 - [ ] OAuth callback/state validation
 - [ ] account discovery
@@ -27,7 +28,7 @@ This roadmap is intentionally capability-driven rather than date-driven.
 - [ ] text publishing
 - [ ] image publishing
 - [ ] replies where officially supported
-- [ ] scheduled publishing
+- [ ] scheduled publishing with pg-boss
 - [ ] publishing quota / error handling
 - [ ] disconnect / token revocation
 - [ ] provider mocks and integration tests

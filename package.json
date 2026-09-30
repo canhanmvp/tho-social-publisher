@@ -1,0 +1,46 @@
+{
+  "name": "tho-social-publisher",
+  "version": "0.1.0",
+  "description": "Open-source, self-hosted social publishing infrastructure for AI agents and MCP clients.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.19.0",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/src/index.js",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate:prod": "node dist/scripts/migrate.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.0",
+    "@modelcontextprotocol/hono": "^2.0.1",
+    "@modelcontextprotocol/server": "^2.2.0",
+    "hono": "^4.12.21",
+    "pg": "^8.23.0",
+    "pg-boss": "^12.35.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^22.19.0",
+    "@types/pg": "^8.15.5",
+    "eslint": "^9.39.0",
+    "globals": "^16.5.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^4.1.10"
+  }
+}
