@@ -16,6 +16,7 @@
     "start": "node dist/src/index.js",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:migrate:prod": "node dist/scripts/migrate.js",
+    "env:generate": "tsx scripts/generate-production-env.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --check .",

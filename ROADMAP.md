@@ -94,9 +94,13 @@ Exit criterion: OAuth -> publish -> schedule -> refresh works reliably without m
 
 ## Phase 5 — Developer experience
 
-- [ ] one-command local setup
+- [x] portable Agent Plugins manifest
+- [x] bundled social-publisher skill
+- [x] remote MCP bearer-token configuration
+- [x] production environment generator
+- [x] VPS + Caddy deployment guide
+- [x] direct Codex MCP configuration guide
+- [ ] one-command deployment
 - [ ] guided OAuth connection UI
-- [ ] example Codex / ChatGPT MCP configuration
 - [ ] release automation
-- [ ] sample deployment recipes
 - [ ] architecture diagram

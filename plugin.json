@@ -1,0 +1,42 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "tho-social-publisher",
+  "version": "0.1.0",
+  "description": "Self-hosted social publishing for Codex, ChatGPT, and MCP-compatible agents.",
+  "author": {
+    "name": "MVP",
+    "url": "https://github.com/canhanmvp"
+  },
+  "homepage": "https://github.com/canhanmvp/tho-social-publisher",
+  "repository": "https://github.com/canhanmvp/tho-social-publisher",
+  "license": "MIT",
+  "keywords": [
+    "social-media",
+    "publishing",
+    "mcp",
+    "codex",
+    "chatgpt",
+    "self-hosted"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Tho Social Publisher",
+        "shortDescription": "Publish and schedule social content from AI agents.",
+        "longDescription": "Connect your own social accounts to a self-hosted MCP server, then publish, schedule, inspect, and manage posts from Codex or ChatGPT.",
+        "developerName": "MVP",
+        "category": "Productivity",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "websiteURL": "https://github.com/canhanmvp/tho-social-publisher",
+        "defaultPrompt": [
+          "List my connected social accounts.",
+          "Schedule this post on my Threads account.",
+          "Show my recent published posts."
+        ]
+      }
+    }
+  }
+}
