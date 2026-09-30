@@ -75,7 +75,7 @@ function toGuardMedia(
 
 function toThreadsMedia(
   media:
-    | Array<{ type: 'image' | 'video'; url: string; alt_text?: string }>
+    | Array<{ type: 'image' | 'video'; url: string; alt_text?: string | undefined }>
     | undefined,
 ) {
   return media?.map((item) => ({
