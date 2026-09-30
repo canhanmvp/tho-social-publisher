@@ -5,15 +5,53 @@ import type { Pool } from 'pg';
 import type { AppConfig } from '../config.js';
 import { checkDatabase } from '../db/pool.js';
 import type { SocialAccountStore } from '../db/social-account-store.js';
+import { isBearerAuthorized, isOwnerAuthorized } from './auth.js';
 import { buildMcpServer } from '../mcp/build-server.js';
+import type { ThreadsService } from '../providers/threads/threads-service.js';
 
 interface AppDependencies {
   config: AppConfig;
   pool: Pool;
   socialAccounts: SocialAccountStore;
+  threads?: ThreadsService;
 }
 
-const CONNECT_PAGE = `<!doctype html>
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function renderConnectPage(
+  accounts: Awaited<ReturnType<SocialAccountStore['list']>>,
+  threadsConfigured: boolean,
+  connectedProvider?: string,
+): string {
+  const threadsAccounts = accounts.filter((account) => account.provider === 'threads');
+
+  const accountList =
+    threadsAccounts.length > 0
+      ? threadsAccounts
+          .map(
+            (account) =>
+              `<li><strong>@${escapeHtml(account.accountName)}</strong><span>${escapeHtml(account.status)}</span></li>`,
+          )
+          .join('')
+      : '<li><strong>No Threads account connected</strong><span>—</span></li>';
+
+  const notice =
+    connectedProvider === 'threads'
+      ? '<div class="notice">Threads account connected successfully.</div>'
+      : '';
+
+  const threadsAction = threadsConfigured
+    ? '<a class="button" href="/oauth/threads/start">Connect / reconnect Threads</a>'
+    : '<span class="muted">Set Threads OAuth environment variables to enable connection.</span>';
+
+  return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -23,43 +61,50 @@ const CONNECT_PAGE = `<!doctype html>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     body { max-width: 760px; margin: 64px auto; padding: 0 24px; background: #0b0d10; color: #f4f4f5; }
     h1 { margin-bottom: 8px; }
-    p { color: #a1a1aa; line-height: 1.6; }
-    .grid { display: grid; gap: 12px; margin-top: 32px; }
-    .provider { display: flex; align-items: center; justify-content: space-between; padding: 16px; border: 1px solid #27272a; border-radius: 12px; }
-    .provider span:last-child { color: #71717a; font-size: 14px; }
+    p, .muted { color: #a1a1aa; line-height: 1.6; }
+    .card { margin-top: 28px; padding: 20px; border: 1px solid #27272a; border-radius: 14px; }
+    ul { list-style: none; padding: 0; margin: 16px 0 20px; display: grid; gap: 8px; }
+    li { display: flex; justify-content: space-between; gap: 16px; }
+    li span { color: #71717a; }
+    .button { display: inline-block; text-decoration: none; background: #fafafa; color: #09090b; padding: 10px 14px; border-radius: 9px; font-weight: 650; }
+    .notice { margin-top: 20px; padding: 12px 14px; border: 1px solid #3f3f46; border-radius: 10px; }
     code { color: #d4d4d8; }
   </style>
 </head>
 <body>
   <h1>Tho Social Publisher</h1>
-  <p>Self-hosted social publishing MCP. Provider OAuth flows are added incrementally and use official platform APIs only.</p>
-  <div class="grid">
-    <div class="provider"><strong>Threads</strong><span>Next: Phase 1</span></div>
-    <div class="provider"><strong>Instagram</strong><span>Planned</span></div>
-    <div class="provider"><strong>Facebook</strong><span>Planned</span></div>
-    <div class="provider"><strong>LinkedIn</strong><span>Planned</span></div>
-    <div class="provider"><strong>TikTok</strong><span>Planned</span></div>
-    <div class="provider"><strong>X</strong><span>Planned</span></div>
-  </div>
+  <p>Self-hosted social publishing MCP using official platform OAuth and APIs.</p>
+  ${notice}
+  <section class="card">
+    <h2>Threads</h2>
+    <ul>${accountList}</ul>
+    ${threadsAction}
+  </section>
   <p>MCP endpoint: <code>/mcp</code></p>
 </body>
 </html>`;
+}
 
-export function createApp({ config, pool, socialAccounts }: AppDependencies) {
+export function createApp({ config, pool, socialAccounts, threads }: AppDependencies) {
   const app = createMcpHonoApp({
     host: config.HOST,
     allowedHosts: config.allowedHosts,
     ...(config.allowedOrigins.length > 0 ? { allowedOrigins: config.allowedOrigins } : {}),
   });
 
-  const mcpHandler = createMcpHandler(() => buildMcpServer({ socialAccounts }));
+  const mcpHandler = createMcpHandler(() => buildMcpServer({ socialAccounts, ...(threads ? { threads } : {}) }));
 
-  app.get('/', (context) => context.json({
-    name: 'tho-social-publisher',
-    version: '0.1.0',
-    mcp: config.MCP_PATH,
-    connect: '/connect',
-  }));
+  app.get('/', (context) =>
+    context.json({
+      name: 'tho-social-publisher',
+      version: '0.1.0',
+      mcp: config.MCP_PATH,
+      connect: '/connect',
+      providers: {
+        threads: Boolean(threads),
+      },
+    }),
+  );
 
   app.get('/health', (context) => context.json({ status: 'ok' }));
 
@@ -72,12 +117,97 @@ export function createApp({ config, pool, socialAccounts }: AppDependencies) {
     }
   });
 
-  app.get('/connect', (context) => context.html(CONNECT_PAGE));
-  app.all(config.MCP_PATH, (context) => mcpHandler.fetch(context.req.raw));
+  app.get('/connect', async (context) => {
+    if (!config.OWNER_ACCESS_PASSWORD) {
+      return context.json({ error: 'owner_access_not_configured' }, 503);
+    }
+
+    if (!isOwnerAuthorized(context.req.header('Authorization'), config.OWNER_ACCESS_PASSWORD)) {
+      context.header('WWW-Authenticate', 'Basic realm="Tho Social Publisher"');
+      return context.text('Owner authentication required.', 401);
+    }
+
+    const accounts = await socialAccounts.list();
+
+    return context.html(
+      renderConnectPage(accounts, Boolean(threads), context.req.query('connected')),
+    );
+  });
+
+  app.get('/oauth/threads/start', async (context) => {
+    if (!config.OWNER_ACCESS_PASSWORD) {
+      return context.json({ error: 'owner_access_not_configured' }, 503);
+    }
+
+    if (!isOwnerAuthorized(context.req.header('Authorization'), config.OWNER_ACCESS_PASSWORD)) {
+      context.header('WWW-Authenticate', 'Basic realm="Tho Social Publisher"');
+      return context.text('Owner authentication required.', 401);
+    }
+
+    if (!threads) {
+      return context.json({ error: 'threads_not_configured' }, 503);
+    }
+
+    const authorizationUrl = await threads.createAuthorizationUrl();
+    return context.redirect(authorizationUrl);
+  });
+
+  app.get('/oauth/threads/callback', async (context) => {
+    if (!threads) {
+      return context.json({ error: 'threads_not_configured' }, 503);
+    }
+
+    const providerError = context.req.query('error');
+    if (providerError) {
+      return context.json(
+        {
+          error: 'threads_authorization_denied',
+          provider_error: providerError,
+        },
+        400,
+      );
+    }
+
+    const code = context.req.query('code');
+    const state = context.req.query('state');
+
+    if (!code || !state) {
+      return context.json({ error: 'missing_oauth_code_or_state' }, 400);
+    }
+
+    try {
+      await threads.completeAuthorization(code, state);
+      return context.redirect('/connect?connected=threads');
+    } catch (error) {
+      console.error('[threads-oauth] callback failed', {
+        name: error instanceof Error ? error.name : 'UnknownError',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      return context.json({ error: 'threads_oauth_failed' }, 400);
+    }
+  });
+
+  app.all(config.MCP_PATH, (context) => {
+    if (!config.MCP_AUTH_TOKEN) {
+      return context.json({ error: 'mcp_auth_not_configured' }, 503);
+    }
+
+    if (!isBearerAuthorized(context.req.header('Authorization'), config.MCP_AUTH_TOKEN)) {
+      return context.json({ error: 'unauthorized' }, 401);
+    }
+
+    return mcpHandler.fetch(context.req.raw);
+  });
+
   app.notFound((context) => context.json({ error: 'not_found' }, 404));
 
   app.onError((error, context) => {
-    console.error('[http] request failed', { name: error.name, message: error.message });
+    console.error('[http] request failed', {
+      name: error.name,
+      message: error.message,
+    });
+
     return context.json({ error: 'internal_server_error' }, 500);
   });
 
