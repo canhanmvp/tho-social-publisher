@@ -11,12 +11,16 @@ The implementation follows Meta's current Threads OAuth and publishing flow:
 3. exchange the short-lived token for a long-lived token using `GET https://graph.threads.net/access_token?grant_type=th_exchange_token`
 4. read the authenticated profile from `GET https://graph.threads.net/me`
 5. publish text using `POST https://graph.threads.net/me/threads` with `auto_publish_text=true`
-6. refresh unexpired long-lived tokens with `GET https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token`
+6. publish images by creating an IMAGE container, waiting until the container is ready, then calling `POST /me/threads_publish`
+7. inspect the live publishing budget using `GET /me/threads_publishing_limit?fields=quota_usage,config`
+8. refresh unexpired long-lived tokens with `GET https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token`
 
 The initial publishing scopes are intentionally minimal:
 
 - `threads_basic`
 - `threads_content_publish`
+
+Reply-management scopes are deliberately not requested by the initial implementation.
 
 ### Human setup in Meta
 
@@ -47,6 +51,7 @@ THREADS_REDIRECT_URI=https://social.example.com/oauth/threads/callback
 TOKEN_ENCRYPTION_KEY=
 OWNER_ACCESS_PASSWORD=
 MCP_AUTH_TOKEN=
+JOB_CONCURRENCY=2
 ```
 
 Generate independent random values for `TOKEN_ENCRYPTION_KEY`, `OWNER_ACCESS_PASSWORD`, and `MCP_AUTH_TOKEN`. Never reuse the Meta app secret as an application security key.
@@ -76,3 +81,4 @@ Alternatively, an authenticated MCP client can call `connect_social_account` wit
 - Provider tokens are never returned by MCP tools.
 - The MCP endpoint requires a separate bearer token.
 - The account connection UI requires separate owner Basic authentication.
+- Media URLs are passed to the provider; the current MCP schema accepts HTTPS URLs only.

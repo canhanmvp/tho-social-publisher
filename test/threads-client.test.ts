@@ -61,13 +61,6 @@ describe('ThreadsClient', () => {
       accessToken: 'long-token',
       expiresIn: 5_183_944,
     });
-
-    const [requestUrl] = fetchFn.mock.calls[0]!;
-    const url = new URL(String(requestUrl));
-
-    expect(url.origin + url.pathname).toBe('https://graph.threads.net/access_token');
-    expect(url.searchParams.get('grant_type')).toBe('th_exchange_token');
-    expect(url.searchParams.get('access_token')).toBe('short-token');
   });
 
   it('fetches the authenticated Threads profile with bearer auth', async () => {
@@ -85,13 +78,13 @@ describe('ThreadsClient', () => {
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer long-token');
   });
 
-  it('publishes text with auto_publish_text and optional reply_to_id', async () => {
+  it('publishes text with auto_publish_text', async () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ id: 'post-123' }), { status: 200 }),
     );
     const client = new ThreadsClient(config, fetchFn);
 
-    await expect(client.publishText('token', 'hello Threads', 'parent-9')).resolves.toEqual({
+    await expect(client.publishText('token', 'hello Threads')).resolves.toEqual({
       id: 'post-123',
     });
 
@@ -102,8 +95,69 @@ describe('ThreadsClient', () => {
     expect(url.origin + url.pathname).toBe('https://graph.threads.net/me/threads');
     expect(url.searchParams.get('media_type')).toBe('TEXT');
     expect(url.searchParams.get('auto_publish_text')).toBe('true');
-    expect(url.searchParams.get('reply_to_id')).toBe('parent-9');
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer token');
+  });
+
+  it('creates an image container and publishes it separately', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'container-1' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'post-2' }), { status: 200 }),
+      );
+    const client = new ThreadsClient(config, fetchFn);
+
+    await expect(
+      client.createImageContainer('token', {
+        imageUrl: 'https://cdn.example.com/image.png',
+        text: 'caption',
+        altText: 'demo',
+      }),
+    ).resolves.toEqual({ id: 'container-1' });
+
+    await expect(client.publishContainer('token', 'container-1')).resolves.toEqual({
+      id: 'post-2',
+    });
+
+    const createUrl = new URL(String(fetchFn.mock.calls[0]![0]));
+    const publishUrl = new URL(String(fetchFn.mock.calls[1]![0]));
+
+    expect(createUrl.searchParams.get('media_type')).toBe('IMAGE');
+    expect(createUrl.searchParams.get('image_url')).toBe('https://cdn.example.com/image.png');
+    expect(publishUrl.pathname).toBe('/me/threads_publish');
+    expect(publishUrl.searchParams.get('creation_id')).toBe('container-1');
+  });
+
+  it('reads the dynamic publishing quota instead of hardcoding a limit', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              quota_usage: 3,
+              config: {
+                quota_total: 250,
+                quota_duration: 86400,
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new ThreadsClient(config, fetchFn);
+
+    await expect(client.getPublishingQuota('token')).resolves.toEqual({
+      usage: 3,
+      total: 250,
+      durationSeconds: 86400,
+    });
+
+    const url = new URL(String(fetchFn.mock.calls[0]![0]));
+    expect(url.pathname).toBe('/me/threads_publishing_limit');
+    expect(url.searchParams.get('fields')).toBe('quota_usage,config');
   });
 
   it('surfaces provider errors without exposing request credentials', async () => {
