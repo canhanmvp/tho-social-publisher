@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ThreadsClient } from '../src/providers/threads/threads-client.js';
-import type { ThreadsApiError } from '../src/providers/threads/threads-client.js';
 
 const config = {
   clientId: '123456',
@@ -115,7 +114,7 @@ describe('ThreadsClient', () => {
     );
     const client = new ThreadsClient(config, fetchFn);
 
-    await expect(client.getProfile('secret-token')).rejects.toMatchObject<Partial<ThreadsApiError>>({
+    await expect(client.getProfile('secret-token')).rejects.toMatchObject({
       status: 401,
       providerCode: 190,
     });
