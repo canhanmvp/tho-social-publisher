@@ -1,8 +1,8 @@
 import type { Buffer } from 'node:buffer';
 
-import { OAuthStateStore } from '../../oauth/oauth-state-store.js';
+import type { OAuthStateStore } from '../../oauth/oauth-state-store.js';
 import { decryptSecret, encryptSecret } from '../../security/token-cipher.js';
-import { ThreadsAccountStore } from './threads-account-store.js';
+import type { ThreadsAccountStore } from './threads-account-store.js';
 import { ThreadsApiError, ThreadsClient } from './threads-client.js';
 
 const REFRESH_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000;

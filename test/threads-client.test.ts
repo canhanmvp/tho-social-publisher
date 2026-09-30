@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ThreadsApiError, ThreadsClient } from '../src/providers/threads/threads-client.js';
+import { ThreadsClient } from '../src/providers/threads/threads-client.js';
+import type { ThreadsApiError } from '../src/providers/threads/threads-client.js';
 
 const config = {
   clientId: '123456',
