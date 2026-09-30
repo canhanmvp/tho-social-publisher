@@ -1,10 +1,11 @@
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: tho_social_publisher
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,7 +18,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
       HOST: 0.0.0.0
       PORT: 3000
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
@@ -26,7 +27,7 @@ services:
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN}
       OWNER_ACCESS_PASSWORD: ${OWNER_ACCESS_PASSWORD}
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tho_social_publisher
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/tho_social_publisher
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
       THREADS_CLIENT_ID: ${THREADS_CLIENT_ID:-}
       THREADS_CLIENT_SECRET: ${THREADS_CLIENT_SECRET:-}
@@ -35,7 +36,7 @@ services:
       JOB_CONCURRENCY: ${JOB_CONCURRENCY:-2}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy

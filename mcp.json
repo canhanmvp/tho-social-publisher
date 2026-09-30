@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "tho_social_publisher": {
+      "type": "streamable-http",
+      "url": "https://social.thodigitals.com/mcp",
+      "bearer_token_env_var": "THO_SOCIAL_PUBLISHER_MCP_TOKEN"
+    }
+  }
+}

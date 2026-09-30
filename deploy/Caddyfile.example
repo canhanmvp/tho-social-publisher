@@ -1,10 +1,12 @@
-{$DOMAIN:localhost} {
+{$DOMAIN} {
   encode zstd gzip
-  reverse_proxy 127.0.0.1:3000
+
+  reverse_proxy 127.0.0.1:{$APP_PORT}
 
   header {
     X-Content-Type-Options nosniff
     Referrer-Policy no-referrer
     Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
   }
 }
