@@ -41,6 +41,8 @@ This roadmap is intentionally capability-driven rather than date-driven.
 - [x] MCP `get_recent_posts`
 - [x] MCP `cancel_scheduled_post`
 - [x] bounded retry with exponential backoff
+- [x] exact duplicate-content fingerprinting across accounts on the same provider
+- [x] explicit duplicate override for intentional reuse
 - [ ] provider-side authorization revocation (only after an official Threads revocation contract is verified)
 - [ ] live end-to-end verification with a real Meta Threads app
 - [ ] video publishing
@@ -81,7 +83,8 @@ Exit criterion: OAuth -> publish -> schedule -> refresh works reliably without m
 
 ## Phase 4 — Reliability
 
-- [ ] duplicate-content fingerprinting
+- [x] exact duplicate-content fingerprinting
+- [ ] semantic-similarity warnings
 - [ ] account-specific posting budgets
 - [ ] dead-letter operations
 - [ ] provider health state

@@ -11,6 +11,7 @@ export interface ScheduledPost {
   socialAccountId: string;
   text: string;
   media: ScheduledImage[];
+  contentFingerprint: string | null;
   scheduledAt: Date;
   status: 'scheduled' | 'processing' | 'published' | 'failed' | 'cancelled';
   attempts: number;
@@ -24,6 +25,7 @@ interface ScheduledPostRow {
   social_account_id: string;
   body_text: string;
   media: ScheduledImage[];
+  content_fingerprint: string | null;
   scheduled_at: Date;
   status: ScheduledPost['status'];
   attempts: number;
@@ -38,6 +40,7 @@ function mapRow(row: ScheduledPostRow): ScheduledPost {
     socialAccountId: row.social_account_id,
     text: row.body_text,
     media: row.media,
+    contentFingerprint: row.content_fingerprint,
     scheduledAt: row.scheduled_at,
     status: row.status,
     attempts: row.attempts,
@@ -47,6 +50,18 @@ function mapRow(row: ScheduledPostRow): ScheduledPost {
   };
 }
 
+const RETURNING_COLUMNS = `id,
+  social_account_id,
+  body_text,
+  media,
+  content_fingerprint,
+  scheduled_at,
+  status,
+  attempts,
+  pgboss_job_id,
+  provider_post_id,
+  last_error`;
+
 export class ScheduledPostStore {
   public constructor(private readonly pool: Pool) {}
 
@@ -54,6 +69,7 @@ export class ScheduledPostStore {
     socialAccountId: string;
     text: string;
     media: ScheduledImage[];
+    contentFingerprint: string;
     scheduledAt: Date;
   }): Promise<ScheduledPost> {
     const result = await this.pool.query<ScheduledPostRow>(
@@ -61,21 +77,19 @@ export class ScheduledPostStore {
           social_account_id,
           body_text,
           media,
+          content_fingerprint,
           scheduled_at,
           status
         )
-       VALUES ($1, $2, $3::jsonb, $4, 'scheduled')
-       RETURNING id,
-                 social_account_id,
-                 body_text,
-                 media,
-                 scheduled_at,
-                 status,
-                 attempts,
-                 pgboss_job_id,
-                 provider_post_id,
-                 last_error`,
-      [input.socialAccountId, input.text, JSON.stringify(input.media), input.scheduledAt],
+       VALUES ($1, $2, $3::jsonb, $4, $5, 'scheduled')
+       RETURNING ${RETURNING_COLUMNS}`,
+      [
+        input.socialAccountId,
+        input.text,
+        JSON.stringify(input.media),
+        input.contentFingerprint,
+        input.scheduledAt,
+      ],
     );
 
     const row = result.rows[0];
@@ -98,16 +112,7 @@ export class ScheduledPostStore {
 
   public async get(postId: string): Promise<ScheduledPost | null> {
     const result = await this.pool.query<ScheduledPostRow>(
-      `SELECT id,
-              social_account_id,
-              body_text,
-              media,
-              scheduled_at,
-              status,
-              attempts,
-              pgboss_job_id,
-              provider_post_id,
-              last_error
+      `SELECT ${RETURNING_COLUMNS}
          FROM scheduled_posts
         WHERE id = $1`,
       [postId],
@@ -118,16 +123,7 @@ export class ScheduledPostStore {
 
   public async list(limit = 100): Promise<ScheduledPost[]> {
     const result = await this.pool.query<ScheduledPostRow>(
-      `SELECT id,
-              social_account_id,
-              body_text,
-              media,
-              scheduled_at,
-              status,
-              attempts,
-              pgboss_job_id,
-              provider_post_id,
-              last_error
+      `SELECT ${RETURNING_COLUMNS}
          FROM scheduled_posts
         ORDER BY scheduled_at ASC
         LIMIT $1`,
@@ -180,11 +176,7 @@ export class ScheduledPostStore {
   }
 
   public async markQueueFailure(postId: string, message: string): Promise<void> {
-    await this.markAttemptFailed(
-      postId,
-      { name: 'QueueError', message },
-      true,
-    );
+    await this.markAttemptFailed(postId, { name: 'QueueError', message }, true);
   }
 
   public async cancel(postId: string): Promise<ScheduledPost | null> {
@@ -194,16 +186,7 @@ export class ScheduledPostStore {
               updated_at = now()
         WHERE id = $1
           AND status = 'scheduled'
-      RETURNING id,
-                social_account_id,
-                body_text,
-                media,
-                scheduled_at,
-                status,
-                attempts,
-                pgboss_job_id,
-                provider_post_id,
-                last_error`,
+      RETURNING ${RETURNING_COLUMNS}`,
       [postId],
     );
 

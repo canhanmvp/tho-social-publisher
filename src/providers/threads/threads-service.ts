@@ -2,7 +2,7 @@ import type { Buffer } from 'node:buffer';
 
 import type { OAuthStateStore } from '../../oauth/oauth-state-store.js';
 import { decryptSecret, encryptSecret } from '../../security/token-cipher.js';
-import type { PublishedMedia, ThreadsAccountStore } from './threads-account-store.js';
+import type { PublishedMedia, ThreadsAccountStore, ThreadsCredentials } from './threads-account-store.js';
 import { ThreadsApiError, ThreadsClient } from './threads-client.js';
 
 const REFRESH_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000;
@@ -17,6 +17,7 @@ export interface ThreadsPublishInput {
     url: string;
     altText?: string;
   };
+  contentFingerprint?: string;
   scheduledPostId?: string;
 }
 
@@ -119,6 +120,7 @@ export class ThreadsService {
         socialAccountId: input.socialAccountId,
         providerPostId: published.id,
         text: input.text ?? '',
+        ...(input.contentFingerprint ? { contentFingerprint: input.contentFingerprint } : {}),
         ...(media ? { media } : {}),
         ...(input.scheduledPostId ? { scheduledPostId: input.scheduledPostId } : {}),
       });
@@ -184,10 +186,7 @@ export class ThreadsService {
 
   private async getUsableAccessToken(
     socialAccountId: string,
-  ): Promise<{
-    credentials: Awaited<ReturnType<ThreadsAccountStore['getCredentials']>> & {};
-    accessToken: string;
-  }> {
+  ): Promise<{ credentials: ThreadsCredentials; accessToken: string }> {
     const credentials = await this.accounts.getCredentials(socialAccountId);
 
     if (!credentials) {

@@ -3,12 +3,15 @@ import * as z from 'zod/v4';
 
 import type { PublishedPostStore } from '../db/published-post-store.js';
 import type { SocialAccountStore } from '../db/social-account-store.js';
+import type { PublishingGuard } from '../guardrails/publishing-guard.js';
+import { DuplicateContentError } from '../guardrails/publishing-guard.js';
 import type { ThreadsService } from '../providers/threads/threads-service.js';
 import type { SocialScheduler } from '../scheduler/social-scheduler.js';
 
 export interface McpDependencies {
   socialAccounts: SocialAccountStore;
   publishedPosts: PublishedPostStore;
+  publishingGuard: PublishingGuard;
   threads?: ThreadsService;
   scheduler?: SocialScheduler;
 }
@@ -33,11 +36,26 @@ const postContentSchema = z
     message: 'A post requires text or one image.',
   });
 
-function toolError(message: string) {
+function toolError(message: string, details?: Record<string, unknown>) {
   return {
     content: [{ type: 'text' as const, text: message }],
     isError: true,
+    ...(details ? { structuredContent: details } : {}),
   };
+}
+
+function duplicateToolError(error: DuplicateContentError) {
+  return toolError(error.message, {
+    error: 'duplicate_content',
+    duplicate_guard_hours: error.guardWindowHours,
+    conflicts: error.conflicts.map((conflict) => ({
+      source: conflict.source,
+      record_id: conflict.recordId,
+      account_id: conflict.socialAccountId,
+      account_name: conflict.accountName,
+      event_at: conflict.eventAt.toISOString(),
+    })),
+  });
 }
 
 export function buildMcpServer(dependencies: McpDependencies): McpServer {
@@ -48,7 +66,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
     },
     {
       instructions:
-        'List connected accounts before publishing when the target account is ambiguous. Publishing is an external side effect. Never invent account IDs.',
+        'List connected accounts before publishing when the target account is ambiguous. Publishing is an external side effect. Never invent account IDs. Avoid blasting identical content across multiple accounts on the same provider.',
     },
   );
 
@@ -88,16 +106,8 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
       const authorizationUrl = await dependencies.threads.createAuthorizationUrl();
 
       return {
-        content: [
-          {
-            type: 'text',
-            text: `Open this URL to grant Threads access: ${authorizationUrl}`,
-          },
-        ],
-        structuredContent: {
-          provider,
-          authorization_url: authorizationUrl,
-        },
+        content: [{ type: 'text', text: `Open this URL to grant Threads access: ${authorizationUrl}` }],
+        structuredContent: { provider, authorization_url: authorizationUrl },
       };
     },
   );
@@ -147,9 +157,10 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
     'publish_post',
     {
       description:
-        'Publish text or one public HTTPS image to one connected social account. Threads is the first implemented provider.',
+        'Publish text or one public HTTPS image to one connected social account. Exact duplicate content on the same provider is blocked within the configured guard window unless allow_duplicate is explicitly true.',
       inputSchema: postContentSchema.extend({
         account_id: z.string().uuid(),
+        allow_duplicate: z.boolean().default(false),
       }),
       annotations: {
         title: 'Publish social post',
@@ -157,13 +168,25 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
         openWorldHint: true,
       },
     },
-    async ({ account_id, text, media }) => {
+    async ({ account_id, text, media, allow_duplicate }) => {
       if (!dependencies.threads) {
         return toolError('Threads publishing is not configured on this server.');
       }
 
       try {
         const image = media?.[0];
+        const guard = await dependencies.publishingGuard.check({
+          socialAccountId: account_id,
+          ...(text ? { text } : {}),
+          ...(image ? { media: [{ type: 'image', url: image.url }] } : {}),
+          targetAt: new Date(),
+          allowDuplicate: allow_duplicate,
+        });
+
+        if (guard.provider !== 'threads') {
+          return toolError(`Provider ${guard.provider} is not implemented for publishing yet.`);
+        }
+
         const result = await dependencies.threads.publish({
           socialAccountId: account_id,
           ...(text ? { text } : {}),
@@ -175,6 +198,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
                 },
               }
             : {}),
+          contentFingerprint: guard.fingerprint,
         });
 
         return {
@@ -194,6 +218,10 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
           },
         };
       } catch (error) {
+        if (error instanceof DuplicateContentError) {
+          return duplicateToolError(error);
+        }
+
         return toolError(error instanceof Error ? error.message : 'Threads publish failed.');
       }
     },
@@ -203,12 +231,13 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
     'schedule_post',
     {
       description:
-        'Persist and schedule a social post for future server-side publishing. The MCP client does not need to remain connected.',
+        'Persist and schedule a social post for future server-side publishing. Exact duplicate content on the same provider is blocked near the target time unless allow_duplicate is explicitly true.',
       inputSchema: postContentSchema.extend({
         account_id: z.string().uuid(),
         scheduled_at: z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
           message: 'scheduled_at must be an ISO-8601 date-time.',
         }),
+        allow_duplicate: z.boolean().default(false),
       }),
       annotations: {
         title: 'Schedule social post',
@@ -216,12 +245,26 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
         openWorldHint: true,
       },
     },
-    async ({ account_id, text, media, scheduled_at }) => {
+    async ({ account_id, text, media, scheduled_at, allow_duplicate }) => {
       if (!dependencies.scheduler) {
         return toolError('Server-side scheduling is not configured.');
       }
 
       try {
+        const scheduledAt = new Date(scheduled_at);
+        const image = media?.[0];
+        const guard = await dependencies.publishingGuard.check({
+          socialAccountId: account_id,
+          ...(text ? { text } : {}),
+          ...(image ? { media: [{ type: 'image', url: image.url }] } : {}),
+          targetAt: scheduledAt,
+          allowDuplicate: allow_duplicate,
+        });
+
+        if (guard.provider !== 'threads') {
+          return toolError(`Provider ${guard.provider} is not implemented for scheduling yet.`);
+        }
+
         const scheduled = await dependencies.scheduler.schedule({
           socialAccountId: account_id,
           text: text ?? '',
@@ -231,7 +274,8 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
               url: item.url,
               ...(item.alt_text ? { altText: item.alt_text } : {}),
             })) ?? [],
-          scheduledAt: new Date(scheduled_at),
+          contentFingerprint: guard.fingerprint,
+          scheduledAt,
         });
 
         return {
@@ -249,6 +293,10 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
           },
         };
       } catch (error) {
+        if (error instanceof DuplicateContentError) {
+          return duplicateToolError(error);
+        }
+
         return toolError(error instanceof Error ? error.message : 'Failed to schedule post.');
       }
     },
@@ -381,10 +429,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
 
       return {
         content: [{ type: 'text', text: `Cancelled scheduled post ${scheduled_post_id}.` }],
-        structuredContent: {
-          scheduled_post_id,
-          status: 'cancelled',
-        },
+        structuredContent: { scheduled_post_id, status: 'cancelled' },
       };
     },
   );

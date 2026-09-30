@@ -6,6 +6,7 @@ import type { AppConfig } from '../config.js';
 import type { PublishedPostStore } from '../db/published-post-store.js';
 import { checkDatabase } from '../db/pool.js';
 import type { SocialAccountStore } from '../db/social-account-store.js';
+import type { PublishingGuard } from '../guardrails/publishing-guard.js';
 import { buildMcpServer } from '../mcp/build-server.js';
 import type { ThreadsService } from '../providers/threads/threads-service.js';
 import type { SocialScheduler } from '../scheduler/social-scheduler.js';
@@ -16,6 +17,7 @@ interface AppDependencies {
   pool: Pool;
   socialAccounts: SocialAccountStore;
   publishedPosts: PublishedPostStore;
+  publishingGuard: PublishingGuard;
   threads?: ThreadsService;
   scheduler?: SocialScheduler;
 }
@@ -94,6 +96,7 @@ export function createApp({
   pool,
   socialAccounts,
   publishedPosts,
+  publishingGuard,
   threads,
   scheduler,
 }: AppDependencies) {
@@ -107,6 +110,7 @@ export function createApp({
     buildMcpServer({
       socialAccounts,
       publishedPosts,
+      publishingGuard,
       ...(threads ? { threads } : {}),
       ...(scheduler ? { scheduler } : {}),
     }),
@@ -118,10 +122,11 @@ export function createApp({
       version: '0.1.0',
       mcp: config.MCP_PATH,
       connect: '/connect',
-      providers: {
-        threads: Boolean(threads),
-      },
+      providers: { threads: Boolean(threads) },
       scheduling: Boolean(scheduler),
+      guardrails: {
+        duplicate_guard_hours: config.DUPLICATE_GUARD_HOURS,
+      },
     }),
   );
 
@@ -148,9 +153,7 @@ export function createApp({
 
     const accounts = await socialAccounts.list(true);
 
-    return context.html(
-      renderConnectPage(accounts, Boolean(threads), context.req.query('connected')),
-    );
+    return context.html(renderConnectPage(accounts, Boolean(threads), context.req.query('connected')));
   });
 
   app.get('/oauth/threads/start', async (context) => {
@@ -178,13 +181,7 @@ export function createApp({
 
     const providerError = context.req.query('error');
     if (providerError) {
-      return context.json(
-        {
-          error: 'threads_authorization_denied',
-          provider_error: providerError,
-        },
-        400,
-      );
+      return context.json({ error: 'threads_authorization_denied', provider_error: providerError }, 400);
     }
 
     const code = context.req.query('code');
@@ -202,7 +199,6 @@ export function createApp({
         name: error instanceof Error ? error.name : 'UnknownError',
         message: error instanceof Error ? error.message : 'Unknown error',
       });
-
       return context.json({ error: 'threads_oauth_failed' }, 400);
     }
   });
@@ -222,11 +218,7 @@ export function createApp({
   app.notFound((context) => context.json({ error: 'not_found' }, 404));
 
   app.onError((error, context) => {
-    console.error('[http] request failed', {
-      name: error.name,
-      message: error.message,
-    });
-
+    console.error('[http] request failed', { name: error.name, message: error.message });
     return context.json({ error: 'internal_server_error' }, 500);
   });
 

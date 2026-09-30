@@ -93,6 +93,7 @@ export class SocialScheduler {
     socialAccountId: string;
     text: string;
     media: ScheduledPost['media'];
+    contentFingerprint: string;
     scheduledAt: Date;
   }): Promise<ScheduledPost> {
     if (input.scheduledAt.getTime() <= Date.now()) {
@@ -167,6 +168,7 @@ export class SocialScheduler {
             },
           }
         : {}),
+      ...(post.contentFingerprint ? { contentFingerprint: post.contentFingerprint } : {}),
       scheduledPostId: post.id,
     });
   }
