@@ -54,6 +54,7 @@ Exit criterion: OAuth -> publish -> schedule -> refresh works reliably without m
 ## Phase 2 — Meta expansion
 
 ### Instagram
+
 - [ ] eligible account discovery
 - [ ] image publishing
 - [ ] carousel publishing
@@ -61,6 +62,7 @@ Exit criterion: OAuth -> publish -> schedule -> refresh works reliably without m
 - [ ] runtime quota checks
 
 ### Facebook
+
 - [ ] Page discovery
 - [ ] Page publishing
 - [ ] media publishing where officially supported
@@ -68,22 +70,29 @@ Exit criterion: OAuth -> publish -> schedule -> refresh works reliably without m
 ## Phase 3 — Additional providers
 
 ### LinkedIn
+
 - [ ] OAuth
 - [ ] supported member publishing
 - [ ] organization publishing where approved
 
 ### TikTok
+
 - [ ] OAuth
 - [ ] official Content Posting API
 - [ ] production/app-review documentation
 
 ### X
+
 - [ ] OAuth
 - [ ] publishing adapter subject to current official API access
 
 ## Phase 4 — Reliability
 
 - [x] exact duplicate-content fingerprinting
+- [x] atomic duplicate reservations across concurrent requests
+- [x] recover confirmed scheduled publications without republishing
+- [x] provider request deadlines and worker cancellation
+- [x] reconcile interrupted and terminal queue jobs with local status
 - [ ] semantic-similarity warnings
 - [ ] account-specific posting budgets
 - [ ] dead-letter operations

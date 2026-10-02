@@ -6,6 +6,7 @@ import type { SocialAccountStore } from '../db/social-account-store.js';
 import type { PublishingGuard } from '../guardrails/publishing-guard.js';
 import { DuplicateContentError } from '../guardrails/publishing-guard.js';
 import type { ThreadsService } from '../providers/threads/threads-service.js';
+import { ThreadsPublicationUncertainError } from '../providers/threads/publication-error.js';
 import type { SocialScheduler } from '../scheduler/social-scheduler.js';
 
 export interface McpDependencies {
@@ -106,7 +107,9 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
       const authorizationUrl = await dependencies.threads.createAuthorizationUrl();
 
       return {
-        content: [{ type: 'text', text: `Open this URL to grant Threads access: ${authorizationUrl}` }],
+        content: [
+          { type: 'text', text: `Open this URL to grant Threads access: ${authorizationUrl}` },
+        ],
         structuredContent: { provider, authorization_url: authorizationUrl },
       };
     },
@@ -158,7 +161,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
     {
       description:
         'Publish text or one public HTTPS image to one connected social account. Exact duplicate content on the same provider is blocked within the configured guard window unless allow_duplicate is explicitly true.',
-      inputSchema: postContentSchema.extend({
+      inputSchema: postContentSchema.safeExtend({
         account_id: z.string().uuid(),
         allow_duplicate: z.boolean().default(false),
       }),
@@ -173,17 +176,20 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
         return toolError('Threads publishing is not configured on this server.');
       }
 
+      let reservationId: string | null = null;
       try {
         const image = media?.[0];
-        const guard = await dependencies.publishingGuard.check({
+        const guard = await dependencies.publishingGuard.reserve({
           socialAccountId: account_id,
           ...(text ? { text } : {}),
           ...(image ? { media: [{ type: 'image', url: image.url }] } : {}),
           targetAt: new Date(),
           allowDuplicate: allow_duplicate,
         });
+        reservationId = guard.reservationId;
 
         if (guard.provider !== 'threads') {
+          await dependencies.publishingGuard.release(reservationId);
           return toolError(`Provider ${guard.provider} is not implemented for publishing yet.`);
         }
 
@@ -200,6 +206,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
             : {}),
           contentFingerprint: guard.fingerprint,
         });
+        await dependencies.publishingGuard.release(reservationId);
 
         return {
           content: [
@@ -218,6 +225,14 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
           },
         };
       } catch (error) {
+        if (error instanceof ThreadsPublicationUncertainError) {
+          return toolError(error.message, {
+            error: 'publication_unconfirmed',
+            provider_post_id: error.providerPostId ?? null,
+            retry_safe: false,
+          });
+        }
+        await dependencies.publishingGuard.release(reservationId);
         if (error instanceof DuplicateContentError) {
           return duplicateToolError(error);
         }
@@ -232,7 +247,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
     {
       description:
         'Persist and schedule a social post for future server-side publishing. Exact duplicate content on the same provider is blocked near the target time unless allow_duplicate is explicitly true.',
-      inputSchema: postContentSchema.extend({
+      inputSchema: postContentSchema.safeExtend({
         account_id: z.string().uuid(),
         scheduled_at: z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
           message: 'scheduled_at must be an ISO-8601 date-time.',
@@ -250,18 +265,21 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
         return toolError('Server-side scheduling is not configured.');
       }
 
+      let reservationId: string | null = null;
       try {
         const scheduledAt = new Date(scheduled_at);
         const image = media?.[0];
-        const guard = await dependencies.publishingGuard.check({
+        const guard = await dependencies.publishingGuard.reserve({
           socialAccountId: account_id,
           ...(text ? { text } : {}),
           ...(image ? { media: [{ type: 'image', url: image.url }] } : {}),
           targetAt: scheduledAt,
           allowDuplicate: allow_duplicate,
         });
+        reservationId = guard.reservationId;
 
         if (guard.provider !== 'threads') {
+          await dependencies.publishingGuard.release(reservationId);
           return toolError(`Provider ${guard.provider} is not implemented for scheduling yet.`);
         }
 
@@ -277,6 +295,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
           contentFingerprint: guard.fingerprint,
           scheduledAt,
         });
+        await dependencies.publishingGuard.release(reservationId);
 
         return {
           content: [
@@ -293,6 +312,7 @@ export function buildMcpServer(dependencies: McpDependencies): McpServer {
           },
         };
       } catch (error) {
+        await dependencies.publishingGuard.release(reservationId);
         if (error instanceof DuplicateContentError) {
           return duplicateToolError(error);
         }

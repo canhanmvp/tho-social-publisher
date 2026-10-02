@@ -140,7 +140,7 @@ export class ScheduledPostStore {
               attempts = attempts + 1,
               updated_at = now()
         WHERE id = $1
-          AND status IN ('scheduled', 'processing')`,
+          AND status = 'scheduled'`,
       [postId],
     );
 
@@ -149,13 +149,24 @@ export class ScheduledPostStore {
 
   public async markPublished(postId: string, providerPostId: string): Promise<void> {
     await this.pool.query(
-      `UPDATE scheduled_posts
+      `WITH publication AS (
+        UPDATE scheduled_posts
           SET status = 'published',
               provider_post_id = $2,
-              published_at = now(),
+              published_at = COALESCE(published_at, now()),
               last_error = NULL,
               updated_at = now()
-        WHERE id = $1`,
+        WHERE id = $1
+          AND (provider_post_id IS NULL OR provider_post_id = $2)
+        RETURNING id, social_account_id, body_text, media, content_fingerprint, published_at
+       )
+       INSERT INTO published_posts (
+         scheduled_post_id, social_account_id, provider_post_id,
+         body_text, media, content_fingerprint, published_at
+       )
+       SELECT id, social_account_id, $2, body_text, media, content_fingerprint, published_at
+         FROM publication
+       ON CONFLICT (provider_post_id, social_account_id) DO NOTHING`,
       [postId, providerPostId],
     );
   }
@@ -164,19 +175,64 @@ export class ScheduledPostStore {
     postId: string,
     error: { name: string; message: string },
     finalFailure: boolean,
+    providerPostId?: string,
   ): Promise<void> {
     await this.pool.query(
       `UPDATE scheduled_posts
           SET status = $2,
               last_error = $3::jsonb,
+              provider_post_id = COALESCE(provider_post_id, $4),
               updated_at = now()
-        WHERE id = $1`,
-      [postId, finalFailure ? 'failed' : 'scheduled', JSON.stringify(error)],
+        WHERE id = $1
+          AND status IN ('scheduled', 'processing')`,
+      [
+        postId,
+        finalFailure ? 'failed' : 'scheduled',
+        JSON.stringify(error),
+        providerPostId ?? null,
+      ],
     );
   }
 
   public async markQueueFailure(postId: string, message: string): Promise<void> {
     await this.markAttemptFailed(postId, { name: 'QueueError', message }, true);
+  }
+
+  public async markInterrupted(postId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE scheduled_posts SET status = 'failed', last_error = $2::jsonb, updated_at = now()
+        WHERE id = $1 AND status = 'processing'`,
+      [
+        postId,
+        JSON.stringify({
+          name: 'ThreadsPublicationUncertainError',
+          message:
+            'A publishing attempt was interrupted. Check the account before publishing this content again.',
+        }),
+      ],
+    );
+  }
+
+  public async findPublishedId(postId: string): Promise<string | null> {
+    const result = await this.pool.query<{ provider_post_id: string }>(
+      `SELECT provider_post_id FROM published_posts
+        WHERE scheduled_post_id = $1
+        ORDER BY published_at ASC LIMIT 1`,
+      [postId],
+    );
+    return result.rows[0]?.provider_post_id ?? null;
+  }
+
+  public async listStaleUnfinished(): Promise<ScheduledPost[]> {
+    const result = await this.pool.query<ScheduledPostRow>(
+      `SELECT ${RETURNING_COLUMNS} FROM scheduled_posts
+        WHERE (status IN ('scheduled', 'processing')
+               OR (status = 'failed' AND provider_post_id IS NOT NULL))
+          AND scheduled_at <= now()
+          AND updated_at < now() - interval '3 minutes'
+        ORDER BY updated_at ASC LIMIT 100`,
+    );
+    return result.rows.map(mapRow);
   }
 
   public async cancel(postId: string): Promise<ScheduledPost | null> {
@@ -186,6 +242,7 @@ export class ScheduledPostStore {
               updated_at = now()
         WHERE id = $1
           AND status = 'scheduled'
+          AND provider_post_id IS NULL
       RETURNING ${RETURNING_COLUMNS}`,
       [postId],
     );

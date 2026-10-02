@@ -1,6 +1,8 @@
 import * as z from 'zod/v4';
 
-const optionalNonEmptyString = z.string().trim().min(1).optional();
+const emptyToUndefined = (value: unknown) =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
+const optionalNonEmptyString = z.preprocess(emptyToUndefined, z.string().trim().min(1).optional());
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -19,7 +21,7 @@ const envSchema = z.object({
   TOKEN_ENCRYPTION_KEY: optionalNonEmptyString,
   THREADS_CLIENT_ID: optionalNonEmptyString,
   THREADS_CLIENT_SECRET: optionalNonEmptyString,
-  THREADS_REDIRECT_URI: z.string().url().optional(),
+  THREADS_REDIRECT_URI: z.preprocess(emptyToUndefined, z.string().url().optional()),
   JOB_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(2),
   DUPLICATE_GUARD_HOURS: z.coerce.number().int().min(0).max(168).default(24),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -54,10 +56,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 }
 
 export function getThreadsRuntimeConfig(config: AppConfig): ThreadsRuntimeConfig | undefined {
-  const values = [config.THREADS_CLIENT_ID, config.THREADS_CLIENT_SECRET, config.THREADS_REDIRECT_URI];
+  const values = [
+    config.THREADS_CLIENT_ID,
+    config.THREADS_CLIENT_SECRET,
+    config.THREADS_REDIRECT_URI,
+  ];
   const configuredCount = values.filter(Boolean).length;
 
-  if (configuredCount === 0) {
+  // Templates may include a redirect URI before provider credentials are added.
+  if (!config.THREADS_CLIENT_ID && !config.THREADS_CLIENT_SECRET) {
     return undefined;
   }
 
