@@ -1,7 +1,10 @@
 import * as z from 'zod/v4';
 
+import { ThreadsPublicationUncertainError } from './publication-error.js';
+
 const THREADS_AUTH_URL = 'https://threads.net/oauth/authorize';
 const THREADS_GRAPH_URL = 'https://graph.threads.net';
+const REQUEST_TIMEOUT_MS = 15_000;
 
 const shortTokenSchema = z.object({
   access_token: z.string().min(1),
@@ -149,13 +152,14 @@ export class ThreadsClient {
 
   public async refreshLongLivedToken(
     currentToken: string,
+    signal?: AbortSignal,
   ): Promise<{ accessToken: string; expiresIn: number }> {
     const url = new URL('/refresh_access_token', THREADS_GRAPH_URL);
 
     url.searchParams.set('grant_type', 'th_refresh_token');
     url.searchParams.set('access_token', currentToken);
 
-    const data = longTokenSchema.parse(await this.requestJson(url));
+    const data = longTokenSchema.parse(await this.requestJson(url, signal ? { signal } : {}));
 
     return {
       accessToken: data.access_token,
@@ -176,12 +180,16 @@ export class ThreadsClient {
     );
   }
 
-  public async getPublishingQuota(accessToken: string): Promise<ThreadsPublishingQuota> {
+  public async getPublishingQuota(
+    accessToken: string,
+    signal?: AbortSignal,
+  ): Promise<ThreadsPublishingQuota> {
     const url = new URL('/me/threads_publishing_limit', THREADS_GRAPH_URL);
     url.searchParams.set('fields', 'quota_usage,config');
 
     const data = publishingQuotaSchema.parse(
       await this.requestJson(url, {
+        ...(signal ? { signal } : {}),
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
@@ -196,21 +204,24 @@ export class ThreadsClient {
     };
   }
 
-  public async publishText(accessToken: string, text: string): Promise<{ id: string }> {
+  public async publishText(
+    accessToken: string,
+    text: string,
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
     const url = new URL('/me/threads', THREADS_GRAPH_URL);
 
     url.searchParams.set('media_type', 'TEXT');
     url.searchParams.set('text', text);
     url.searchParams.set('auto_publish_text', 'true');
 
-    const data = idResponseSchema.parse(
-      await this.requestJson(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }),
-    );
+    const data = await this.requestPublication(url, {
+      method: 'POST',
+      ...(signal ? { signal } : {}),
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
 
     return { id: data.id };
   }
@@ -218,6 +229,7 @@ export class ThreadsClient {
   public async createImageContainer(
     accessToken: string,
     input: { imageUrl: string; text?: string; altText?: string },
+    signal?: AbortSignal,
   ): Promise<{ id: string }> {
     const url = new URL('/me/threads', THREADS_GRAPH_URL);
 
@@ -235,6 +247,7 @@ export class ThreadsClient {
     const data = idResponseSchema.parse(
       await this.requestJson(url, {
         method: 'POST',
+        ...(signal ? { signal } : {}),
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
@@ -247,12 +260,14 @@ export class ThreadsClient {
   public async getContainerStatus(
     accessToken: string,
     containerId: string,
+    signal?: AbortSignal,
   ): Promise<ThreadsContainerStatus> {
     const url = new URL(`/${encodeURIComponent(containerId)}`, THREADS_GRAPH_URL);
     url.searchParams.set('fields', 'id,status,error_message');
 
     return containerStatusSchema.parse(
       await this.requestJson(url, {
+        ...(signal ? { signal } : {}),
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
@@ -263,25 +278,29 @@ export class ThreadsClient {
   public async publishContainer(
     accessToken: string,
     containerId: string,
+    signal?: AbortSignal,
   ): Promise<{ id: string }> {
     const url = new URL('/me/threads_publish', THREADS_GRAPH_URL);
     url.searchParams.set('creation_id', containerId);
 
-    const data = idResponseSchema.parse(
-      await this.requestJson(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }),
-    );
+    const data = await this.requestPublication(url, {
+      method: 'POST',
+      ...(signal ? { signal } : {}),
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
 
     return { id: data.id };
   }
 
   private async requestJson(url: URL, init: RequestInit = {}): Promise<unknown> {
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    signal.throwIfAborted();
     const response = await this.fetchFn(url, {
       ...init,
+      signal,
       headers: {
         Accept: 'application/json',
         ...init.headers,
@@ -318,5 +337,25 @@ export class ThreadsClient {
     }
 
     return body;
+  }
+
+  private async requestPublication(url: URL, init: RequestInit): Promise<{ id: string }> {
+    // An already cancelled request has not been sent and cannot have published.
+    init.signal?.throwIfAborted();
+    try {
+      return idResponseSchema.parse(await this.requestJson(url, init));
+    } catch (error) {
+      if (
+        error instanceof ThreadsApiError &&
+        error.status >= 400 &&
+        error.status < 500 &&
+        error.status !== 408
+      ) {
+        throw error;
+      }
+      // A timeout, transport failure, 5xx, or malformed success response cannot
+      // prove that the provider rejected a publication. Never blindly retry it.
+      throw new ThreadsPublicationUncertainError();
+    }
   }
 }

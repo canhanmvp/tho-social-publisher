@@ -1,14 +1,21 @@
 import type { Buffer } from 'node:buffer';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type { OAuthStateStore } from '../../oauth/oauth-state-store.js';
 import { decryptSecret, encryptSecret } from '../../security/token-cipher.js';
-import type { PublishedMedia, ThreadsAccountStore, ThreadsCredentials } from './threads-account-store.js';
+import type {
+  PublishedMedia,
+  ThreadsAccountStore,
+  ThreadsCredentials,
+} from './threads-account-store.js';
 import { ThreadsApiError, ThreadsClient } from './threads-client.js';
+import { ThreadsPublicationUncertainError } from './publication-error.js';
 
 const REFRESH_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000;
 const MIN_REFRESH_AGE_MS = 24 * 60 * 60 * 1000;
 const IMAGE_READY_TIMEOUT_MS = 35_000;
 const IMAGE_POLL_INTERVAL_MS = 5_000;
+const PUBLISH_TIMEOUT_MS = 120_000;
 
 export interface ThreadsPublishInput {
   socialAccountId: string;
@@ -19,6 +26,7 @@ export interface ThreadsPublishInput {
   };
   contentFingerprint?: string;
   scheduledPostId?: string;
+  signal?: AbortSignal;
 }
 
 export interface ThreadsPublishResult {
@@ -29,10 +37,6 @@ export interface ThreadsPublishResult {
     total: number;
     durationSeconds: number;
   };
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export class ThreadsQuotaError extends Error {
@@ -94,17 +98,24 @@ export class ThreadsService {
       throw new Error('A Threads post requires text or an image.');
     }
 
-    const { credentials, accessToken } = await this.getUsableAccessToken(input.socialAccountId);
-    const quota = await this.client.getPublishingQuota(accessToken);
-
-    if (quota.usage >= quota.total) {
-      throw new ThreadsQuotaError(quota.usage, quota.total, quota.durationSeconds);
-    }
-
+    const timeout = AbortSignal.timeout(PUBLISH_TIMEOUT_MS);
+    const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
+    let credentials: ThreadsCredentials | undefined;
     try {
+      signal.throwIfAborted();
+      const connection = await this.getUsableAccessToken(input.socialAccountId, signal);
+      credentials = connection.credentials;
+      const accessToken = connection.accessToken;
+      const quota = await this.client.getPublishingQuota(accessToken, signal);
+
+      if (quota.usage >= quota.total) {
+        throw new ThreadsQuotaError(quota.usage, quota.total, quota.durationSeconds);
+      }
+      signal.throwIfAborted();
+
       const published = input.image
-        ? await this.publishImage(accessToken, input)
-        : await this.client.publishText(accessToken, input.text!);
+        ? await this.publishImage(accessToken, input, signal)
+        : await this.client.publishText(accessToken, input.text!, signal);
 
       const media: PublishedMedia[] | undefined = input.image
         ? [
@@ -116,14 +127,21 @@ export class ThreadsService {
           ]
         : undefined;
 
-      await this.accounts.recordPublishedPost({
-        socialAccountId: input.socialAccountId,
-        providerPostId: published.id,
-        text: input.text ?? '',
-        ...(input.contentFingerprint ? { contentFingerprint: input.contentFingerprint } : {}),
-        ...(media ? { media } : {}),
-        ...(input.scheduledPostId ? { scheduledPostId: input.scheduledPostId } : {}),
-      });
+      // The scheduler saves history and its published state atomically. An
+      // immediate post must preserve an uncertain outcome if that write fails.
+      if (!input.scheduledPostId) {
+        try {
+          await this.accounts.recordPublishedPost({
+            socialAccountId: input.socialAccountId,
+            providerPostId: published.id,
+            text: input.text ?? '',
+            ...(input.contentFingerprint ? { contentFingerprint: input.contentFingerprint } : {}),
+            ...(media ? { media } : {}),
+          });
+        } catch {
+          throw new ThreadsPublicationUncertainError(published.id);
+        }
+      }
 
       return {
         providerPostId: published.id,
@@ -136,7 +154,9 @@ export class ThreadsService {
       };
     } catch (error) {
       if (error instanceof ThreadsApiError && (error.status === 401 || error.status === 403)) {
-        await this.accounts.markReauthRequired(credentials.oauthAccountId);
+        if (credentials) {
+          await this.accounts.markReauthRequired(credentials.oauthAccountId);
+        }
       }
 
       throw error;
@@ -146,24 +166,29 @@ export class ThreadsService {
   private async publishImage(
     accessToken: string,
     input: ThreadsPublishInput,
+    signal: AbortSignal,
   ): Promise<{ id: string }> {
     if (!input.image) {
       throw new Error('Image payload is missing.');
     }
 
-    const container = await this.client.createImageContainer(accessToken, {
-      imageUrl: input.image.url,
-      ...(input.text ? { text: input.text } : {}),
-      ...(input.image.altText ? { altText: input.image.altText } : {}),
-    });
+    const container = await this.client.createImageContainer(
+      accessToken,
+      {
+        imageUrl: input.image.url,
+        ...(input.text ? { text: input.text } : {}),
+        ...(input.image.altText ? { altText: input.image.altText } : {}),
+      },
+      signal,
+    );
 
     const deadline = Date.now() + IMAGE_READY_TIMEOUT_MS;
 
     while (Date.now() < deadline) {
-      const status = await this.client.getContainerStatus(accessToken, container.id);
+      const status = await this.client.getContainerStatus(accessToken, container.id, signal);
 
       if (status.status === 'FINISHED') {
-        return this.client.publishContainer(accessToken, container.id);
+        return this.client.publishContainer(accessToken, container.id, signal);
       }
 
       if (status.status === 'PUBLISHED') {
@@ -176,7 +201,7 @@ export class ThreadsService {
         );
       }
 
-      await delay(IMAGE_POLL_INTERVAL_MS);
+      await delay(IMAGE_POLL_INTERVAL_MS, undefined, { signal });
     }
 
     throw new Error(
@@ -186,8 +211,10 @@ export class ThreadsService {
 
   private async getUsableAccessToken(
     socialAccountId: string,
+    signal: AbortSignal,
   ): Promise<{ credentials: ThreadsCredentials; accessToken: string }> {
     const credentials = await this.accounts.getCredentials(socialAccountId);
+    signal.throwIfAborted();
 
     if (!credentials) {
       throw new Error('No active Threads connection exists for this social account.');
@@ -202,13 +229,18 @@ export class ThreadsService {
 
     if (this.shouldRefresh(credentials.expiresAt, credentials.tokenUpdatedAt)) {
       try {
-        const refreshed = await this.client.refreshLongLivedToken(accessToken);
+        const refreshed = await this.client.refreshLongLivedToken(accessToken, signal);
         const expiresAt = new Date(Date.now() + refreshed.expiresIn * 1000);
         const encrypted = encryptSecret(refreshed.accessToken, this.encryptionKey);
 
         await this.accounts.updateToken(credentials.oauthAccountId, encrypted, expiresAt);
         accessToken = refreshed.accessToken;
       } catch (error) {
+        signal.throwIfAborted();
+        if (error instanceof ThreadsApiError && (error.status === 401 || error.status === 403)) {
+          await this.accounts.markReauthRequired(credentials.oauthAccountId);
+          throw error;
+        }
         if (
           credentials.expiresAt &&
           credentials.expiresAt.getTime() <= Date.now() + 24 * 60 * 60 * 1000

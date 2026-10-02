@@ -33,14 +33,14 @@ The goal is not to bypass platform rules or rate limits. Provider policies, perm
 
 ## Planned providers
 
-| Provider | Priority | Planned capabilities |
-| --- | --- | --- |
-| Threads | P0 | OAuth, text, image, replies, scheduling |
-| Instagram | P0 | Professional account publishing, image, carousel, Reels |
-| Facebook | P0 | Page publishing |
-| LinkedIn | P1 | Member / organization publishing where officially supported |
-| TikTok | P2 | Official Content Posting API where approved |
-| X | P3 | Official API support subject to current access requirements |
+| Provider  | Priority | Planned capabilities                                        |
+| --------- | -------- | ----------------------------------------------------------- |
+| Threads   | P0       | OAuth, text, image, replies, scheduling                     |
+| Instagram | P0       | Professional account publishing, image, carousel, Reels     |
+| Facebook  | P0       | Page publishing                                             |
+| LinkedIn  | P1       | Member / organization publishing where officially supported |
+| TikTok    | P2       | Official Content Posting API where approved                 |
+| X         | P3       | Official API support subject to current access requirements |
 
 Capabilities are implemented only when supported by the provider's current official API and the connected account's permissions.
 
@@ -151,6 +151,10 @@ cp .env.example .env
 ```
 
 Do not reuse production secrets in local development.
+
+Blank optional settings are treated as unset. Threads remains disabled until its app credentials are provided; production still requires MCP and owner authentication.
+
+See [publishing reliability](docs/PUBLISHING_RELIABILITY.md) for retry behavior, duplicate reservations, and recovery after uncertain publication outcomes.
 
 ## Contributing
 

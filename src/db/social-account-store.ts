@@ -1,6 +1,10 @@
 import type { Pool, PoolClient } from 'pg';
 
-import type { SocialAccount, SocialAccountStatus, SocialProvider } from '../domain/social-account.js';
+import type {
+  SocialAccount,
+  SocialAccountStatus,
+  SocialProvider,
+} from '../domain/social-account.js';
 
 interface SocialAccountRow {
   id: string;
@@ -79,7 +83,8 @@ export class PostgresSocialAccountStore implements SocialAccountStore {
             SET status = 'cancelled',
                 updated_at = now()
           WHERE social_account_id = $1
-            AND status = 'scheduled'`,
+            AND status = 'scheduled'
+            AND provider_post_id IS NULL`,
         [accountId],
       );
 

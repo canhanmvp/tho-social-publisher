@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ThreadsClient } from '../src/providers/threads/threads-client.js';
+import { ThreadsPublicationUncertainError } from '../src/providers/threads/publication-error.js';
 
 const config = {
   clientId: '123456',
@@ -64,9 +65,11 @@ describe('ThreadsClient', () => {
   });
 
   it('fetches the authenticated Threads profile with bearer auth', async () => {
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ id: '42', username: 'mvp', name: 'MVP' }), { status: 200 }),
-    );
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ id: '42', username: 'mvp', name: 'MVP' }), { status: 200 }),
+      );
     const client = new ThreadsClient(config, fetchFn);
 
     await expect(client.getProfile('long-token')).resolves.toMatchObject({
@@ -79,9 +82,9 @@ describe('ThreadsClient', () => {
   });
 
   it('publishes text with auto_publish_text', async () => {
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ id: 'post-123' }), { status: 200 }),
-    );
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({ id: 'post-123' }), { status: 200 }));
     const client = new ThreadsClient(config, fetchFn);
 
     await expect(client.publishText('token', 'hello Threads')).resolves.toEqual({
@@ -101,12 +104,8 @@ describe('ThreadsClient', () => {
   it('creates an image container and publishes it separately', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ id: 'container-1' }), { status: 200 }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ id: 'post-2' }), { status: 200 }),
-      );
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'container-1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'post-2' }), { status: 200 }));
     const client = new ThreadsClient(config, fetchFn);
 
     await expect(
@@ -162,9 +161,12 @@ describe('ThreadsClient', () => {
 
   it('surfaces provider errors without exposing request credentials', async () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ error: { message: 'Invalid OAuth access token.', code: 190 } }), {
-        status: 401,
-      }),
+      new Response(
+        JSON.stringify({ error: { message: 'Invalid OAuth access token.', code: 190 } }),
+        {
+          status: 401,
+        },
+      ),
     );
     const client = new ThreadsClient(config, fetchFn);
 
@@ -174,5 +176,86 @@ describe('ThreadsClient', () => {
     });
 
     await expect(client.getProfile('secret-token')).rejects.not.toThrow('secret-token');
+  });
+
+  it('passes a deadline signal to every provider request', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({ id: '42', username: 'owner' })));
+    await new ThreadsClient(config, fetchFn).getProfile('token');
+    expect(fetchFn.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('aborts an in-flight publishing request when the worker is cancelled', async () => {
+    const controller = new AbortController();
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = init!.signal!;
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+    );
+    const result = new ThreadsClient(config, fetchFn).publishText(
+      'token',
+      'hello',
+      controller.signal,
+    );
+    const assertion = expect(result).rejects.toBeInstanceOf(ThreadsPublicationUncertainError);
+    controller.abort();
+    await assertion;
+    expect(fetchFn.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it('does not send a publishing request after cancellation', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchFn = vi.fn<typeof fetch>();
+    await expect(
+      new ThreadsClient(config, fetchFn).publishText('token', 'hello', controller.signal),
+    ).rejects.toThrow();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('enforces the provider deadline on a hanging request', async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    try {
+      const fetchFn = vi.fn<typeof fetch>().mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), {
+              once: true,
+            });
+          }),
+      );
+      const result = new ThreadsClient(config, fetchFn).publishText('token', 'hello');
+      const assertion = expect(result).rejects.toBeInstanceOf(ThreadsPublicationUncertainError);
+      expect(timeout).toHaveBeenCalledWith(15_000);
+      deadline.abort(new DOMException('Deadline exceeded', 'TimeoutError'));
+      await assertion;
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it.each([
+    new Response('invalid json', { status: 200 }),
+    new Response(JSON.stringify({ error: { message: 'Unavailable' } }), { status: 503 }),
+  ])('treats ambiguous publishing responses as unsafe to retry', async (response) => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(response);
+    await expect(
+      new ThreadsClient(config, fetchFn).publishText('token', 'hello'),
+    ).rejects.toBeInstanceOf(ThreadsPublicationUncertainError);
+  });
+
+  it('keeps a confirmed 429 rejection retryable', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: 'Rate limited', code: 4 } }), {
+        status: 429,
+      }),
+    );
+    await expect(
+      new ThreadsClient(config, fetchFn).publishText('token', 'hello'),
+    ).rejects.toMatchObject({ name: 'ThreadsApiError', status: 429 });
   });
 });
