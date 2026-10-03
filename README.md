@@ -6,6 +6,39 @@ Connect your own social accounts through OAuth, then publish or schedule content
 
 > Status: early development. The project is being built in public and is not production-ready yet.
 
+## Self-host once, connect from many machines
+
+Anyone can run their own installation. Each owner brings their own Threads developer-app credentials and connects their accounts through OAuth. There is no required shared service or maintainer-owned endpoint.
+
+One always-on server holds the database, provider credentials, publication history, and scheduled jobs. Connect all your trusted computers to that same server; they do not need their own database or Threads app. Scheduled posts run even when those computers are off.
+
+On the server, with Node.js 22.12+, npm 11+, Docker Compose, and a hostname you control:
+
+```bash
+git clone https://github.com/canhanmvp/tho-social-publisher.git
+cd tho-social-publisher
+npm install
+npm run setup -- --domain social.example.com
+```
+
+Setup creates `.env.production` and client files in `.local/client/`. Rerunning it preserves existing secrets. Add your Threads app credentials to `.env.production`, register its callback URI in Meta, configure DNS and HTTPS, then start:
+
+```bash
+docker compose --env-file .env.production up -d --build
+```
+
+Check `/health` and `/ready`, then open `https://social.example.com/connect` to authorize Threads. Follow [deployment](docs/DEPLOYMENT.md) for the complete steps.
+
+For another computer, copy `.local/client/` or generate it using:
+
+```bash
+npm run client:configure -- --url https://social.example.com/mcp
+```
+
+Only the MCP URL and bearer token are needed on clients. Generated client files contain no secrets; supply the token privately on each machine. See [client and multi-machine setup](docs/PLUGIN_SETUP.md). The repository's root `mcp.json` defaults to localhost for development; use the generated client package for your remote server.
+
+Currently implemented: Threads text, one image, and scheduled publishing. Installing the plugin alone does not deploy a server or configure a Meta app.
+
 ## Why this project exists
 
 Most social schedulers put account count, posting volume, automation, or API access behind paid tiers. Tho Social Publisher takes a different approach:

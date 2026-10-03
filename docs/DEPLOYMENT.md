@@ -26,13 +26,13 @@ PostgreSQL is not published to the host network. The application port is bound t
 
 Create an A/AAAA record for the MCP hostname and point it at the VPS.
 
-The owner deployment used by the bundled plugin is:
+Choose your own hostname, for example:
 
 ```text
-social.thodigitals.com
+social.example.com
 ```
 
-Forks should replace that hostname in `mcp.json` with their own production MCP URL.
+The repository does not depend on a shared server. Run setup for your hostname to generate a client package, then use that package on all your trusted machines.
 
 ## 2. Clone and install
 
@@ -42,13 +42,13 @@ cd tho-social-publisher
 npm install
 ```
 
-## 3. Generate production secrets
+## 3. Prepare this installation
 
 ```bash
-npm run env:generate -- --domain social.thodigitals.com
+npm run setup -- --domain social.example.com
 ```
 
-This creates `.env.production` with file mode `0600`. The script generates independent random values for:
+On first use, setup creates `.env.production` with file mode `0600` on POSIX systems; on Windows, restrict access using file permissions. It also writes a portable plugin and Codex configuration to `.local/client/`, without secrets. Setup generates independent random values for:
 
 - MCP bearer token
 - owner UI password
@@ -57,7 +57,7 @@ This creates `.env.production` with file mode `0600`. The script generates indep
 
 The values are written to the file and are not printed to stdout.
 
-Do not commit `.env.production`.
+Do not commit `.env.production`. Running setup again preserves the entire existing file, including encryption keys and provider credentials. A different hostname is rejected until you deliberately update the existing configuration. `env:generate -- --force` remains an explicit credential-rotation operation; do not use it for routine setup or upgrades.
 
 ## 4. Add Threads developer credentials
 
@@ -71,7 +71,7 @@ THREADS_CLIENT_SECRET=
 The generated redirect URI will be:
 
 ```text
-https://social.thodigitals.com/oauth/threads/callback
+https://social.example.com/oauth/threads/callback
 ```
 
 Register that exact redirect URI in the Meta Threads app.
@@ -97,14 +97,14 @@ Both health endpoints should succeed before exposing the service.
 Install Caddy on the host, copy `deploy/Caddyfile.example`, and provide:
 
 ```bash
-export DOMAIN=social.thodigitals.com
+export DOMAIN=social.example.com
 export APP_PORT=3000
 ```
 
 Use the Caddy deployment mechanism appropriate for the host. Confirm HTTPS works:
 
 ```bash
-curl https://social.thodigitals.com/health
+curl https://social.example.com/health
 ```
 
 Do not expose PostgreSQL or the Docker app port directly to the public internet.
@@ -114,7 +114,7 @@ Do not expose PostgreSQL or the Docker app port directly to the public internet.
 Open:
 
 ```text
-https://social.thodigitals.com/connect
+https://social.example.com/connect
 ```
 
 HTTP Basic credentials:
@@ -134,7 +134,7 @@ THO_SOCIAL_PUBLISHER_MCP_TOKEN
 
 Set that environment variable to the same value as server-side `MCP_AUTH_TOKEN`.
 
-Never commit either value.
+Never commit either value. Copy `.local/client/` to your other computers and follow [PLUGIN_SETUP.md](PLUGIN_SETUP.md). Each computer uses the same endpoint and token; provider credentials and PostgreSQL remain on the server. You do not need to authorize Threads again on each computer.
 
 ## Updating
 

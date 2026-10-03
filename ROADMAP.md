@@ -107,6 +107,9 @@ Exit criterion: OAuth -> publish -> schedule -> refresh works reliably without m
 - [x] bundled social-publisher skill
 - [x] remote MCP bearer-token configuration
 - [x] production environment generator
+- [x] repeatable self-hosted setup preserving existing secrets
+- [x] client configuration generator for owner-selected MCP URLs
+- [x] multi-machine setup instructions
 - [x] VPS + Caddy deployment guide
 - [x] direct Codex MCP configuration guide
 - [ ] one-command deployment
