@@ -3,7 +3,7 @@
   "mcpServers": {
     "tho_social_publisher": {
       "type": "streamable-http",
-      "url": "https://social.thodigitals.com/mcp",
+      "url": "http://localhost:3000/mcp",
       "bearer_token_env_var": "THO_SOCIAL_PUBLISHER_MCP_TOKEN"
     }
   }
