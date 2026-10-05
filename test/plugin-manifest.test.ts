@@ -25,7 +25,7 @@ describe('portable plugin package', () => {
     const server = mcp.mcpServers.tho_social_publisher;
     expect(server).toBeDefined();
     expect(server?.type).toBe('streamable-http');
-    expect(server?.url).toBe('https://social.thodigitals.com/mcp');
+    expect(server?.url).toBe('http://localhost:3000/mcp');
     expect(server?.bearer_token_env_var).toBe('THO_SOCIAL_PUBLISHER_MCP_TOKEN');
   });
 });

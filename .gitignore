@@ -39,6 +39,7 @@ token*.json
 secrets*.json
 
 # Local databases / state
+.local/
 *.sqlite
 *.sqlite3
 *.db
